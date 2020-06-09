@@ -1,12 +1,17 @@
+path_prefix: './'
+
 # MODELS
 full_model: 'language'
 full_models: ['language']
 
 # DATA
-max_len: 64
+ds_max_len: 32
+ds_max_lens: [24, 32]
+max_len: 128
 
 # TRAINING
+epochs: 100
+batch_size: 16
 lang_encoder_lr: 0.001
 lang_decoder_lr: 0.001
-
 label_smoothing: 0.0001

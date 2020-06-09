@@ -25,14 +25,21 @@ def get_transformer(LM:bool):
 
 
 def batch_encode(raw_texts:list):
+  flatten_output = False
+  if isinstance(raw_texts, tf.Tensor):
+    flatten_output = True
+    raw_texts = [tf.compat.as_str(raw_texts.numpy())]
   token_batch = tokenizer.batch_encode_plus(
     raw_texts,
     max_length=CFG['max_len'],
     pad_to_max_length=True,
     return_attention_masks=True,
-    return_tensors='tf'
+    return_tensors='tf',
   )
-  return token_batch
+  if flatten_output:
+    return token_batch['input_ids'], token_batch['attention_mask']
+  else:
+    return token_batch
 
 
 class LangEncoder(tf.keras.Model):
@@ -76,6 +83,20 @@ def sequence_reconstruction_loss(logits, code_tokens):
   input_ids = code_tokens['input_ids']
   labels = tf.one_hot(input_ids, depth=vocab_size)
   loss = tf.keras.losses.categorical_crossentropy(
+    labels,
+    logits,
+    from_logits=True,
+    label_smoothing=CFG['label_smoothing']
+  )
+  loss = tf.math.reduce_sum(loss)
+  return loss
+
+
+def sequence_reconstruction_accuracy(logits, code_tokens):
+  vocab_size = logits.shape[2]
+  input_ids = code_tokens['input_ids']
+  labels = tf.one_hot(input_ids, depth=vocab_size)
+  loss = tf.keras.losses.categorical_accuracy(
     labels,
     logits,
     from_logits=True,

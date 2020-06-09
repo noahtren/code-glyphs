@@ -4,7 +4,8 @@
 import tensorflow as tf
 
 from cfg import get_config; CFG = get_config()
-from language import LangEncoder, LangDecoder, sequence_reconstruction_loss
+from language import LangEncoder, LangDecoder, \
+  sequence_reconstruction_loss, sequence_reconstruction_accuracy
 from adamlrm import AdamLRM
 
 
@@ -13,6 +14,17 @@ class LangAutoencoder(tf.keras.Model):
     super(LangAutoencoder, self).__init__()
     self.lang_encoder = LangEncoder()
     self.lang_decoder = LangDecoder()
+
+
+  def compile(self, optimizer, loss_fn, metric_fn):
+    super(LangAutoencoder, self).compile()
+    self.optimizer = optimizer
+    self.loss_fn = loss_fn
+    self.metric_fn = metric_fn
+
+
+  def train_step(self, data):
+    pass
 
 
   def call(tokens):
@@ -38,6 +50,11 @@ def get_loss_fn():
     raise ValueError
 
 
+def get_metric_fn():
+  metric_fn = sequence_reconstruction_accuracy
+  return metric_fn
+
+
 def get_optim():
   lr_multiplier = {
     'root_model/lang_encoder': CFG['lang_encoder_lr'],
@@ -46,6 +63,7 @@ def get_optim():
   }
   optim = AdamLRM(lr=1., lr_multiplier=lr_multiplier)
   return optim
+
 
 
 if __name__ == "__main__":
