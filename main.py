@@ -20,8 +20,13 @@ if __name__ == "__main__":
   path_prefix = CFG['path_prefix']
   tbc = tf.keras.callbacks.TensorBoard(log_dir=f"{path_prefix}logs")
 
+  # build and compile model
+  for val in ds.take(1): pass
+  model(val)
   model.compile(optimizer=optim, loss_fn=loss_fn, metric_fn=metric_fn)
   model.run_eagerly = CFG['eager_mode']
+
+  # train loop
   model.fit(x=ds,
             validation_data=val_ds,
             epochs=CFG['epochs'],

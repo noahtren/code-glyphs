@@ -86,7 +86,6 @@ class LangEncoder(tf.keras.Model):
     """Embed all tokens and return the average token embedding.
     """
     features = self.lm(tokens, training=training)[0]
-    features = tf.math.reduce_mean(features, axis=1)
     return features
 
 
@@ -101,8 +100,6 @@ class LangDecoder(tf.keras.Model):
     Features are of shape [batch_size, hidden_size]. Before predicting, this
     function tiles the features to equal max_len.
     """
-    features = tf.expand_dims(features, axis=1)
-    features = tf.tile(features, [1, CFG['max_len'], 1])
     logits = self.lm(None, inputs_embeds=features, training=training)[0]
     return logits
 
@@ -132,7 +129,7 @@ def sequence_reconstruction_accuracy(code_tokens, logits):
     labels,
     logits,
   )
-  loss = tf.math.reduce_sum(loss)
+  loss = tf.math.reduce_mean(loss)
   return loss
 
 
