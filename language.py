@@ -4,23 +4,57 @@ Unfortunately not using CODEBert because it is only available in PyTorch.
 Instead, using the generic distilBERT language model.
 """
 
+import code
+
 import tensorflow as tf
 from transformers import TFDistilBertModel, DistilBertTokenizer, TFDistilBertForMaskedLM
+from transformers import AutoModel, AutoTokenizer, AutoModelWithLMHead
+from transformers import TFRobertaModel, TFRobertaForMaskedLM
+from transformers import load_pytorch_model_in_tf2_model
 
 from cfg import get_config; CFG = get_config()
 
-tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-cased')
+MODEL_NAMES = [
+  'distilbert-base-cased',
+  'huggingface/CodeBERTa-small-v1'
+]
+
+
+model_name = 'huggingface/CodeBERTa-small-v1'
+if model_name == 'distilbert-base-cased':
+  tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-cased')
+elif model_name == 'huggingface/CodeBERTa-small-v1':
+  tokenizer = AutoTokenizer.from_pretrained('huggingface/CodeBERTa-small-v1')
+
+
+def pt_to_tf(pt_model, tf_model_class):
+  assert model_name == 'huggingface/CodeBERTa-small-v1'
+  empty_tf_model = tf_model_class(pt_model.config)
+  tf_model = load_pytorch_model_in_tf2_model(empty_tf_model, pt_model)
+  return tf_model
 
 
 def get_transformer(LM:bool):
   if LM:
-    model = TFDistilBertForMaskedLM.from_pretrained(
-      'distilbert-base-cased'
-    )
+    if model_name == 'distilbert-base-cased':
+      model = TFDistilBertForMaskedLM.from_pretrained(
+        'distilbert-base-cased'
+      )
+    elif model_name == 'huggingface/CodeBERTa-small-v1':
+      model = AutoModelWithLMHead.from_pretrained(
+        'huggingface/CodeBERTa-small-v1'
+      )
+      model = pt_to_tf(model, TFRobertaForMaskedLM)
   else:
-    model = TFDistilBertModel.from_pretrained(
-      'distilbert-base-cased',
-    )
+    if model_name == 'distilbert-base-cased':
+      model = TFDistilBertModel.from_pretrained(
+        'distilbert-base-cased',
+      )
+    elif model_name == 'huggingface/CodeBERTa-small-v1':
+      model = AutoModel.from_pretrained(
+        'huggingface/CodeBERTa-small-v1'
+      )
+      model = pt_to_tf(model, TFRobertaModel)
   return model
 
 
@@ -75,7 +109,7 @@ class LangDecoder(tf.keras.Model):
     return logits
 
 
-def sequence_reconstruction_loss(logits, code_tokens):
+def sequence_reconstruction_loss(code_tokens, logits):
   """Loss an entire sequence predicted in one step. Evaluates each token
   individually.
   """
@@ -92,15 +126,13 @@ def sequence_reconstruction_loss(logits, code_tokens):
   return loss
 
 
-def sequence_reconstruction_accuracy(logits, code_tokens):
+def sequence_reconstruction_accuracy(code_tokens, logits):
   vocab_size = logits.shape[2]
   input_ids = code_tokens['input_ids']
   labels = tf.one_hot(input_ids, depth=vocab_size)
-  loss = tf.keras.losses.categorical_accuracy(
+  loss = tf.keras.metrics.categorical_accuracy(
     labels,
     logits,
-    from_logits=True,
-    label_smoothing=CFG['label_smoothing']
   )
   loss = tf.math.reduce_sum(loss)
   return loss

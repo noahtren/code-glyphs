@@ -1,6 +1,8 @@
 """Models, optim, and loss functions based on CFG
 """
 
+import code
+
 import tensorflow as tf
 
 from cfg import get_config; CFG = get_config()
@@ -24,10 +26,31 @@ class LangAutoencoder(tf.keras.Model):
 
 
   def train_step(self, data):
-    pass
+    x, _ = data
+    losses = {}
+    metrics = {}
+    with tf.GradientTape() as tape:
+      y = self.call(x)
+      losses['recon_loss'] = self.loss_fn(x, y)
+      for sub_model in self.layers:
+        losses[f"{sub_model.name}_reg_loss"] = tf.math.reduce_sum(sub_model.losses)
+
+      # sum all losses
+      loss_sum = 0.
+      for loss in losses.values():
+        loss_sum += loss
+
+    # optimize
+    grads = tape.gradient(loss_sum, self.trainable_variables)
+    self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
+
+    # metrics
+    metrics['recon_acc'] = self.metric_fn(x, y)
+
+    return {**losses, **metrics}
 
 
-  def call(tokens):
+  def call(self, tokens):
     assert 'input_ids' in tokens
     assert 'attention_mask' in tokens
     features = self.lang_encoder(tokens)
