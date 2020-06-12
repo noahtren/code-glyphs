@@ -11,6 +11,14 @@ from language import LangEncoder, LangDecoder, \
 from adamlrm import AdamLRM
 
 
+def print_model_prefixes(model):
+  """Find the model prefix for each model
+  """
+  for sub_model in model.layers:
+    for variable in sub_model.variables:
+      print(f"{sub_model}: {variable.name}")
+
+
 class LangAutoencoder(tf.keras.Model):
   def __init__(self):
     super(LangAutoencoder, self).__init__()
@@ -80,8 +88,8 @@ def get_metric_fn():
 
 def get_optim():
   lr_multiplier = {
-    'root_model/lang_encoder': CFG['lang_encoder_lr'],
-    'root_model/lang_decoder': CFG['lang_decoder_lr'],
+    'tf_roberta_model': CFG['lang_encoder_lr'],
+    'tf_roberta_for_masked_lm': CFG['lang_decoder_lr'],
     # TODO: add vision learning rates
   }
   optim = AdamLRM(lr=1., lr_multiplier=lr_multiplier)

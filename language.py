@@ -79,7 +79,6 @@ def batch_encode(raw_texts:list):
 class LangEncoder(tf.keras.Model):
   def __init__(self):
     super(LangEncoder, self).__init__()
-    self._name = 'code_embed'
     self.lm = get_transformer(LM=False)
 
 
@@ -94,7 +93,6 @@ class LangEncoder(tf.keras.Model):
 class LangDecoder(tf.keras.Model):
   def __init__(self):
     super(LangDecoder, self).__init__()
-    self._name = 'code_decode'
     self.lm = get_transformer(LM=True)
 
   def call(self, features, training=True):

@@ -4,6 +4,18 @@ path_prefix: './'
 full_model: 'language'
 full_models: ['language']
 eager_mode: true
+# -- VISION
+vision_hidden_size: 512
+# -- -- CPPN
+img_dim: 256
+cppn_layers: 5
+c_out: 5
+composite_colors:
+  - "ffffff"
+  - "000000"
+  - "cc9900"
+  - "00bbcc"
+  - "63cc00"
 
 # DATA
 ds_max_len: 32
@@ -12,7 +24,7 @@ max_len: 128
 
 # TRAINING
 epochs: 100
-batch_size: 16
+batch_size: 8
 lang_encoder_lr: 0.001
 lang_decoder_lr: 0.001
 label_smoothing: 0.0001
