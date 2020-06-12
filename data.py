@@ -69,9 +69,14 @@ def get_dataset():
         'input_ids': tf.squeeze(inp_ids),
         'attention_mask': tf.squeeze(atn_mask)
       }
+      def set_shapes(x):
+        for key in x.keys():
+          x[key].set_shape((CFG['max_len']))
+        return x
       repeat_data = lambda x: (x, x)
       ds = ds.map(py_func_batch_encode)
       ds = ds.map(nest_data)
+      ds = ds.map(set_shapes)
       ds = ds.map(repeat_data)
       ds = ds.batch(CFG['batch_size'])
       return ds

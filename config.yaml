@@ -3,7 +3,7 @@ path_prefix: './'
 # MODELS
 full_model: 'language'
 full_models: ['language']
-eager_mode: true
+eager_mode: false
 # -- VISION
 vision_hidden_size: 512
 # -- -- CPPN
