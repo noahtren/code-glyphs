@@ -4,6 +4,7 @@
 import code
 import os
 import json
+import re
 
 import jsonlines
 from tqdm import tqdm
@@ -11,14 +12,15 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 
 from cfg import get_config; CFG = get_config()
-from language import batch_encode
+from language import batch_encode, tokenizer
 
 file_dir = os.path.dirname(os.path.abspath(__file__))
 code_data_dir = os.path.join(file_dir, 'code_data')
 
 
-def read_code_dataset(subdir='train', read_all=False, filter_len=32):
+def read_code_dataset(subdir='train', read_all=True):
   train_data_dir = os.path.join(code_data_dir, subdir)
+  pattern = r'(\"\"\"(.|\n)*\"\"\"\s*)'
   data = []
   for i, train_data_file in tqdm(enumerate(os.listdir(train_data_dir))):
     if i > 0 and not read_all:
@@ -26,8 +28,20 @@ def read_code_dataset(subdir='train', read_all=False, filter_len=32):
     data_file_path = os.path.join(train_data_dir, train_data_file)
     with jsonlines.open(data_file_path) as reader:
       for data_line in reader:
-        if len(data_line['code_tokens']) <= filter_len:
-          data.append(data_line)
+        if len(data_line['code_tokens']) <= CFG['max_len']:
+          code_str = data_line['original_string']
+          docstring = re.search(pattern, code_str)
+          if docstring is not None:
+            docstring = docstring.groups()[0]
+            print(docstring)
+            # if len(docstring) != 1:
+            #   code.interact(local={**locals(), **globals()})
+            code_str = code_str.replace(docstring, "")
+          if len(tokenizer.encode(code_str)) <= CFG['max_len']:
+            data.append(code_str)
+  with open(f"data_cache_{CFG['max_len']}.json", "w+") as f:
+    f.write(json.dumps(data))
+  print(f"Got {len(data)} data samples")
   return data
 
 
@@ -42,7 +56,7 @@ def code_dataset_stats(data):
 def read_small_code_dataset_cache():
   cache_loc = os.path.join(
     code_data_dir,
-    f"data_cache_{CFG['ds_max_len']}.json"
+    f"data_cache_{CFG['max_len']}.json"
   )
   print(f"Reading dataset from {cache_loc}")
   cache_data = json.load(open(cache_loc, 'r'))
@@ -55,7 +69,6 @@ def get_dataset():
   """
   if CFG['full_model'] in ['language']:
     data = read_small_code_dataset_cache()
-    data = [func['code'] for func in data]
     data_split = int(len(data) * 0.8)
     train_data = data[:data_split]
     test_data = data[data_split:]
@@ -73,11 +86,9 @@ def get_dataset():
         for key in x.keys():
           x[key].set_shape((CFG['max_len']))
         return x
-      repeat_data = lambda x: (x, x)
       ds = ds.map(py_func_batch_encode)
       ds = ds.map(nest_data)
       ds = ds.map(set_shapes)
-      ds = ds.map(repeat_data)
       ds = ds.batch(CFG['batch_size'])
       return ds
     ds = get_code_dataset(train_data)
@@ -88,5 +99,7 @@ def get_dataset():
 
 
 if __name__ == "__main__":
+  # read_code_dataset()
+
   ds, val_ds = get_dataset()
   for val in ds.take(1): pass
