@@ -14,9 +14,10 @@ if __name__ == "__main__":
   model, loss_fn, metric_fn = \
     get_model(), get_loss_fn(), get_metric_fn()
 
-
   path_prefix = CFG['path_prefix']
-  run_name = CFG['run_name'] + '_' + secrets.token_hex(2)
+  run_name = CFG['run_name']
+
+  # callbacks
   tbc = tf.keras.callbacks.TensorBoard(log_dir=f"{path_prefix}logs/{run_name}")
   diffc = DifficultyManager()
 

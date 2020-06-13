@@ -214,7 +214,7 @@ def get_metric_fn():
     return tf.keras.metrics.CategoricalAccuracy()
   else:
     raise ValueError
-    
+
 
 
 def get_optim(model):

@@ -1,5 +1,9 @@
-path_prefix: './'
+local_prefix: './'
 run_name: local_test
+use_gcs: true
+gcs_prefix: 'gs://code-glyphs/'
+s3_bucket: 'gestalt-graph'
+gcs_bucket: 'code-glyphs'
 
 # MODELS
 full_model: 'vision'
