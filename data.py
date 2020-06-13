@@ -89,11 +89,18 @@ def get_dataset():
       ds = ds.map(py_func_batch_encode)
       ds = ds.map(nest_data)
       ds = ds.map(set_shapes)
-      ds = ds.batch(CFG['batch_size'])
+      ds = ds.batch(CFG['batch_size'], drop_remainder=True)
       return ds
     ds = get_code_dataset(train_data)
     val_ds = get_code_dataset(test_data)
     return ds, val_ds
+  elif CFG['full_model'] in ['vision']:
+    data = tf.range(CFG['num_symbols'])
+    data = tf.one_hot(data, CFG['num_symbols'])
+    ds = tf.data.Dataset.from_tensor_slices(data)
+    ds = ds.shuffle(buffer_size=CFG['num_symbols'])
+    ds = ds.batch(CFG['batch_size'], drop_remainder=True)
+    return ds, ds
   else:
     raise NotImplementedError
 

@@ -1,8 +1,9 @@
 path_prefix: './'
+run_name: local_test
 
 # MODELS
-full_model: 'language'
-full_models: ['language']
+full_model: 'vision'
+full_models: ['language', 'vision', 'gestalt']
 eager_mode: false
 
 # -- LANGUAGE
@@ -12,22 +13,30 @@ language_model_size: 768
 # -- VISION
 vision_hidden_size: 512
 # -- -- CPPN
-img_dim: 256
-cppn_layers: 5
-c_out: 5
+img_dim: 64
+cppn_layers: 3
+c_out: 3
 composite_colors:
-  - "ffffff"
-  - "000000"
-  - "cc9900"
-  - "00bbcc"
-  - "63cc00"
+  - "ff0000"
+  - "00ff00"
+  - "0000ff"
+  # - "ffffff"
+  # - "000000"
+  # - "cc9900"
+  # - "00bbcc"
+  # - "63cc00"
 
 # DATA
 max_len: 48
+num_symbols: 64
 
 # TRAINING
-epochs: 100
-batch_size: 8
+epochs: 500
+batch_size: 24
 lang_encoder_lr: 1.e-4 # BERT: peak value of 1-e4 with b=256
 lang_decoder_lr: 1.e-4
+generator_lr: 5.e-4
+decoder_lr: 5.e-4
+default_lr: 1.e-3
 label_smoothing: 0.00001
+use_aug: true

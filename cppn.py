@@ -5,8 +5,14 @@ import tensorflow as tf
 from cfg import get_config; CFG = get_config()
 
 dense_settings = {
-  'kernel_regularizer': tf.keras.regularizers.l2(1e-4),
-  'bias_regularizer': tf.keras.regularizers.l2(1e-4),
+  # 'kernel_regularizer': tf.keras.regularizers.l2(1e-4),
+  # 'bias_regularizer': tf.keras.regularizers.l2(1e-4),
+}
+cnn_settings = {
+
+}
+activity_reg = {
+  'activity_regularizer': tf.keras.regularizers.l1(5e-5)
 }
 
 
@@ -21,8 +27,8 @@ def generate_scaled_coordinate_hints(batch_size, y_dim, x_dim):
   """Generally used as the input to a CPPN, but can also augment each layer
   of a ConvNet with location hints
   """
-  spatial_scale = 1. / max([y_dim, x_dim])
-  spatial_scale = 1
+  # spatial_scale = 1. / max([y_dim, x_dim])
+  spatial_scale = 1.
   coord_ints = get_coord_ints(y_dim, x_dim)
   coords = tf.cast(coord_ints, tf.float32)
   coords = tf.stack([coords[:, :, 0] * spatial_scale,
@@ -36,6 +42,60 @@ def generate_scaled_coordinate_hints(batch_size, y_dim, x_dim):
   return loc
 
 
+class Conv1x1ResidualBlock(tf.keras.layers.Layer):
+  """Vision processing block based on stacked hourglass network/resdiual block,
+  but using only 1x1 convolutions to work with a CPPN.
+  Uses full pre-activation from Identity Mappings in Deep Residual Networks.
+  ---
+  Identity Mappings in Deep Residual Networks
+  https://arxiv.org/pdf/1603.05027.pdf
+  ---
+  """
+  def __init__(self, filters:int):
+    super(Conv1x1ResidualBlock, self).__init__()
+    self.first_conv = tf.keras.layers.Conv2D(
+      filters // 4,
+      kernel_size=1,
+      strides=1,
+      padding='same',
+      **cnn_settings
+    )
+    self.second_conv = tf.keras.layers.Conv2D(
+      filters // 4,
+      kernel_size=1,
+      strides=1,
+      padding='same',
+      **cnn_settings
+    )
+    self.third_conv = tf.keras.layers.Conv2D(
+      filters,
+      kernel_size=1,
+      strides=1,
+      padding='same',
+      **cnn_settings
+    )
+    self.batch_norms = [tf.keras.layers.BatchNormalization() for _ in range(3)]
+
+
+  def call(self, x):
+    start_x = x
+
+    x = self.batch_norms[0](x)
+    x = tf.nn.leaky_relu(x)
+    x = self.first_conv(x)
+
+    x = self.batch_norms[1](x)
+    x = tf.nn.leaky_relu(x)
+    x = self.second_conv(x)
+
+    x = self.batch_norms[2](x)
+    x = tf.nn.leaky_relu(x)
+    x = self.third_conv(x)
+
+    x = x + start_x
+    return x
+
+
 class CPPN(tf.keras.Model):
   """Compositional Pattern-Producing Network
   Embeds each (x,y,r) -- where r is radius from center -- pair triple via a
@@ -45,42 +105,70 @@ class CPPN(tf.keras.Model):
   def __init__(self):
     super(CPPN, self).__init__()
     self._name = 'cppn'
-    self.loc_embed = tf.keras.layers.Dense(CFG['vision_hidden_size'] // 4, **dense_settings)
-    self.Z_embed = tf.keras.layers.Dense(CFG['vision_hidden_size'] // 4, **dense_settings)
-    self.in_w = tf.keras.layers.Dense(CFG['vision_hidden_size'], **dense_settings)
-    self.ws = [tf.keras.layers.Dense(CFG['vision_hidden_size'], **dense_settings)
-      for _ in range(CFG['cppn_layers'])]
-    self.out_w = tf.keras.layers.Dense(CFG['c_out'], **dense_settings)
+    self.loc_embeds = [tf.keras.layers.Conv2D(
+      CFG['vision_hidden_size'] // 4,
+      kernel_size=1,
+      strides=1,
+      padding='same',
+      **cnn_settings
+      ) for _ in range(3)]
+    self.loc_norms = [tf.keras.layers.BatchNormalization() for _ in range(3)]
+
+    self.Z_embeds = [tf.keras.layers.Dense(CFG['vision_hidden_size'], **dense_settings) for _ in range(3)]
+    self.Z_norms = [tf.keras.layers.BatchNormalization() for _ in range(3)]
+
+    self.in_conv = tf.keras.layers.Conv2D(
+      CFG['vision_hidden_size'],
+      kernel_size=1,
+      strides=1,
+      padding='same',
+      **cnn_settings
+    )
+    self.res_blocks = [Conv1x1ResidualBlock(CFG['vision_hidden_size']) for _ in range(CFG['cppn_layers'])]
+    self.out_conv = tf.keras.layers.Conv2D(
+      CFG['c_out'],
+      kernel_size=1,
+      strides=1,
+      padding='same',
+      **cnn_settings,
+      **activity_reg
+    )
     self.img_dim = CFG['img_dim']
     self.spatial_scale = 1 / CFG['img_dim']
 
 
   def call(self, Z):
-    batch_size = Z.shape[0]
+    batch_size = CFG['batch_size']
 
     # get pixel locations and embed pixels
     loc = generate_scaled_coordinate_hints(1, self.img_dim, self.img_dim)
-    loc = self.loc_embed(loc)
-    loc = tf.tile(loc, [batch_size, 1, 1, 1])
+    for i, (embed, norm) in enumerate(zip(self.loc_embeds, self.loc_norms)):
+      start_loc = loc
+      loc = embed(loc)
+      loc = norm(loc)
+      loc = tf.nn.leaky_relu(loc)
+      if i != 0: loc = loc + start_loc
 
     # concatenate Z to locations
-    Z = self.Z_embed(Z)
+    for i, (embed, norm) in enumerate(zip(self.Z_embeds, self.Z_norms)):
+      start_Z = Z
+      Z = embed(Z)
+      Z = norm(Z)
+      Z = tf.nn.leaky_relu(Z)
+      if i != 0: Z = Z + start_Z
+
+    loc = tf.tile(loc, [batch_size, 1, 1, 1])
     Z = tf.tile(Z[:, tf.newaxis, tf.newaxis], [1, self.img_dim, self.img_dim, 1])
     x = tf.concat([loc, Z], axis=-1)
-    x = self.in_w(x)
+    x = self.in_conv(x)
 
-    # encode
-    for layer in self.ws:
-      start_x = x
-      x = layer(x)
-      x = tf.nn.leaky_relu(x)
-
-    x = self.out_w(x)
+    # generate
+    for resblock in self.res_blocks:
+      x = resblock(x)
+    
+    x = self.out_conv(x)
     x = tf.nn.softmax(x, axis=-1)
-    x = (x * 2) - 1
-    if x.shape[-1] == 1:
-      # Copy grayscale along RGB axes for easy input into pre-trained, color-based models
-      x = tf.tile(x, [1, 1, 1, 3])
+    x = color_composite(x)
     return x
 
 
@@ -89,7 +177,6 @@ def hex_to_rgb(hex_str):
 
 
 def color_composite(imgs):
-  assert tf.math.reduce_min(imgs) >= 0
   out_channels = tf.zeros(imgs.shape[:3] + [3])
   for channel_i in range(imgs.shape[3]):
     hex_str = CFG['composite_colors'][channel_i]

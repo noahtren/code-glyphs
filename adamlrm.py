@@ -192,7 +192,6 @@ class AdamLRM(optimizer_v2.OptimizerV2):
       if var.name.startswith(k):
         lr_t = coefficients['lr_t'] * self._get_hyper(f'lrm_{k}', var.dtype)
 
-
     if not self.amsgrad:
       return training_ops.resource_apply_adam(
           var.handle,

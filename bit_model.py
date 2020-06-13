@@ -6,6 +6,7 @@ wget https://storage.googleapis.com/bit_models/BiT-M-R50x3.h5
 """
 
 import os
+import code
 
 import tensorflow as tf
 
@@ -39,7 +40,18 @@ def get_model(model_name='BiT-M-R50x1'):
   model.build((None, None, None, 3))
   model_path = os.path.join('models', f"{model_name}.h5")
   model.load_weights(model_path)
+  model._head = None
   return model
+
+
+class BiT(tf.keras.Model):
+  def __init__(self):
+    super(BiT, self).__init__()
+    self.model = get_model()
+
+
+  def call(self, x):
+    return self.model(x)
 
 
 if __name__ == "__main__":
