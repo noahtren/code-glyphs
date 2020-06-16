@@ -15,7 +15,7 @@ from cfg import get_config; CFG = get_config()
 from language import batch_encode, tokenizer
 
 file_dir = os.path.dirname(os.path.abspath(__file__))
-code_data_dir = os.path.join(file_dir, 'code_data')
+code_data_dir = file_dir
 
 
 def read_code_dataset(subdir='train', read_all=True):
@@ -63,46 +63,65 @@ def read_small_code_dataset_cache():
   return cache_data
 
 
-def get_dataset():
+def get_dataset(num_replicas:int=1, tokenize_before=True):
   """Returns a tf.data.Dataset that produces batches of
   `input_ids` and `attention_mask` tensors.
+
+  All tokenization is done in memory in advance, and then converted into a
+  tf.data.Dataset. This requires that memory is large enough to hold all
+  tokens.
   """
-  if CFG['full_model'] in ['language']:
+  if CFG['full_model'] in ['language', 'gestalt']:
     data = read_small_code_dataset_cache()
     data_split = int(len(data) * 0.8)
     train_data = data[:data_split]
     test_data = data[data_split:]
-    def get_code_dataset(code_lines):
-      ds = tf.data.Dataset.from_tensor_slices(data)
-      py_func_batch_encode = lambda strings: tf.py_function(
-        func=batch_encode,
-        inp=[strings],
-        Tout=[tf.int32, tf.int32])
-      nest_data = lambda inp_ids, atn_mask: {
-        'input_ids': tf.squeeze(inp_ids),
-        'attention_mask': tf.squeeze(atn_mask)
-      }
-      def set_shapes(x):
-        for key in x.keys():
-          x[key].set_shape((CFG['max_len']))
-        return x
-      ds = ds.map(py_func_batch_encode)
-      ds = ds.map(nest_data)
-      ds = ds.map(set_shapes)
-      ds = ds.batch(CFG['batch_size'], drop_remainder=True)
-      return ds
-    ds = get_code_dataset(train_data)
-    val_ds = get_code_dataset(test_data)
-    return ds, val_ds
+    def set_shapes(x):
+      for key in x.keys():
+        x[key].set_shape((CFG['max_len']))
+      return x
+    if tokenize_before:
+      def tokenize_before_dataset(strings):
+        print(f"Tokenizing {len(strings)} strings")
+        tokens = batch_encode(strings)
+        ds = tf.data.Dataset.from_tensor_slices({
+          "input_ids": tokens["input_ids"],
+          "attention_mask": tokens["attention_mask"],
+        })
+        ds = ds.shuffle(buffer_size=1024)
+        ds = ds.batch(CFG['batch_size'] * num_replicas, drop_remainder=True)
+        return ds
+      ds = tokenize_before_dataset(train_data)
+      val_ds = tokenize_before_dataset(test_data)
+      return ds, val_ds
+    else:
+      def get_code_dataset(code_lines):
+        ds = tf.data.Dataset.from_tensor_slices(data)
+        py_func_batch_encode = lambda strings: tf.py_function(
+          func=batch_encode,
+          inp=[strings],
+          Tout=[tf.int32, tf.int32])
+        nest_data = lambda inp_ids, atn_mask: {
+          'input_ids': tf.squeeze(inp_ids),
+          'attention_mask': tf.squeeze(atn_mask)
+        }
+        ds = ds.map(py_func_batch_encode)
+        ds = ds.map(nest_data)
+        ds = ds.map(set_shapes)
+        ds = ds.shuffle(buffer_size=1024)
+        ds = ds.batch(CFG['batch_size'] * num_replicas, drop_remainder=True)
+        return ds
+      ds = get_code_dataset(train_data)
+      val_ds = get_code_dataset(test_data)
+      return ds, val_ds
   elif CFG['full_model'] in ['vision']:
     data = tf.range(CFG['num_symbols'])
     data = tf.one_hot(data, CFG['num_symbols'])
+    data = tf.tile(data, [8, 1])
     ds = tf.data.Dataset.from_tensor_slices(data)
     ds = ds.shuffle(buffer_size=CFG['num_symbols'])
-    ds = ds.batch(CFG['batch_size'], drop_remainder=True)
+    ds = ds.batch(CFG['batch_size'] * num_replicas, drop_remainder=True)
     return ds, ds
-  else:
-    raise NotImplementedError
 
 
 if __name__ == "__main__":

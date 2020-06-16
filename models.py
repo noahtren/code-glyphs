@@ -9,7 +9,7 @@ import tensorflow as tf
 from cfg import get_config; CFG = get_config()
 from language import LangEncoder, LangDecoder, \
   sequence_reconstruction_loss, sequence_reconstruction_accuracy
-from cppn import CPPN
+from generator import Generator
 from bit_model import BiT
 from adamlrm import AdamLRM
 from aug import get_noisy_channel
@@ -23,7 +23,7 @@ lr_multiplier_models = {
   LangEncoder: CFG['lang_encoder_lr'],
   LangDecoder: CFG['lang_decoder_lr'],
   BiT: CFG['decoder_lr'],
-  CPPN: CFG['generator_lr'],
+  Generator: CFG['generator_lr'],
   tf.keras.layers.Dense: CFG['default_lr']
 }
 
@@ -58,11 +58,12 @@ def train_step(self, x):
   losses = {}
   metrics = {}
   with tf.GradientTape() as tape:
-    y = self.call(x)['prediction']
-    losses['recon_loss'] = self.loss_fn(x, y)
+    result = self.call(x)
+    y = result['prediction']
+    losses['recon_loss'] = self.loss_fn(x, y, self.loss_object)
     for sub_model in self.layers:
       sub_model_loss = tf.math.reduce_sum(sub_model.losses)
-      losses[f"{sub_model.name}_reg_loss"] = tf.math.reduce_sum(sub_model.losses)
+      losses[f"{sub_model.name}_reg_loss"] = sub_model_loss
 
     # sum all losses
     loss_sum = 0.
@@ -78,7 +79,7 @@ def train_step(self, x):
 
   if hasattr(self, 'difficulty'): metrics['difficulty'] = self.difficulty
 
-  return {**losses, **metrics}
+  return {**losses, **metrics, **result['metadata']}
 
 
 def test_step(self, x):
@@ -87,7 +88,7 @@ def test_step(self, x):
   losses = {}
   metrics = {}
   y = self.call(x)['prediction']
-  losses['val_recon_loss'] = self.loss_fn(x, y)
+  losses['val_recon_loss'] = self.loss_fn(x, y, self.loss_object)
   metrics['val_recon_acc'] = self.metric_fn(x, y)
   return {**losses, **metrics}
 
@@ -111,10 +112,11 @@ class LangAutoencoder(tf.keras.Model):
       self.funnel_up.insert(0, up)
 
 
-  def compile(self, optimizer, loss_fn, metric_fn, debug=True):
+  def compile(self, optimizer, loss_fn, loss_object , metric_fn, debug=True):
     super(LangAutoencoder, self).compile()
     self.optimizer = optimizer
     self.loss_fn = loss_fn
+    self.loss_object = loss_object
     self.metric_fn = metric_fn
     self.train_step = MethodType(train_step, self)
     self.test_step = MethodType(test_step, self)
@@ -127,20 +129,22 @@ class LangAutoencoder(tf.keras.Model):
 
     for down in self.funnel_down:
       x = down(x)
-      x = tf.nn.swish(x)
+      x = tf.nn.leaky_relu(x)
       print(x.shape)
     
     Z = x
 
     for up in self.funnel_up:
       x = up(x)
-      x = tf.nn.swish(x)
+      x = tf.nn.leaky_relu(x)
       print(x.shape)
 
     seq_pred = self.lang_decoder(x)
     return {
       'prediction': seq_pred,
-      'Z': Z
+      'metadata': {
+        'Z': Z
+      }
     }
 
 
@@ -148,9 +152,9 @@ class VisionModel(tf.keras.Model):
   def __init__(self):
     super(VisionModel, self).__init__()
     self._name = 'root'
-    self.generator = CPPN()
+    self.generator = Generator()
     self.decoder = BiT()
-    self.symbol_embed = tf.keras.layers.Dense(CFG['vision_hidden_size'], **dense_settings)
+    self.symbol_embed = tf.keras.layers.Dense(CFG['vision_model_size'], **dense_settings)
     self.symbol_predict = tf.keras.layers.Dense(CFG['num_symbols'], **dense_settings)
     self.noisy_channel = get_noisy_channel()
     self.difficulty = tf.Variable(
@@ -160,10 +164,11 @@ class VisionModel(tf.keras.Model):
     )
 
 
-  def compile(self, optimizer, loss_fn, metric_fn, debug=True):
+  def compile(self, optimizer, loss_fn, loss_object , metric_fn, debug=True):
     super(VisionModel, self).compile()
     self.optimizer = optimizer
     self.loss_fn = loss_fn
+    self.loss_object = loss_object
     self.metric_fn = metric_fn
     self.train_step = MethodType(train_step, self)
     self.test_step = MethodType(test_step, self)
@@ -175,13 +180,104 @@ class VisionModel(tf.keras.Model):
     if CFG['use_aug']:
       aug_imgs = self.noisy_channel(imgs, self.difficulty)
     else:
-      aug_imgs = None
-    Z_pred = self.decoder(imgs)
+      aug_imgs = imgs
+    Z_pred = self.decoder(aug_imgs)
     x_pred = self.symbol_predict(Z_pred)
     return {
       'prediction': x_pred,
-      'imgs': imgs,
-      'aug_imgs': aug_imgs
+      'metadata': {
+        'imgs': imgs,
+        'aug_imgs': aug_imgs,
+        'Z': Z,
+        'Z_pred': Z_pred
+      }
+    }
+
+
+class GestaltModel(tf.keras.Model):
+  def __init__(self):
+    super(GestaltModel, self).__init__()
+    self._name = 'root'
+    # LANGUAGE
+    self.lang_encoder = LangEncoder()
+    self.lang_decoder = LangDecoder()
+    # VISION
+    self.generator = Generator()
+    self.decoder = BiT()
+    self.noisy_channel = get_noisy_channel()
+    self.difficulty = tf.Variable(
+      tf.convert_to_tensor(0, tf.int32),
+      trainable=False,
+      name='difficulty'
+    )
+    # AUTOENCODER
+    self.funnel_down = []
+    self.funnel_up = []
+    num_features = CFG['language_model_size']
+    while num_features != CFG['target_token_dim']:
+      if num_features // 4 < CFG['target_token_dim']:
+        num_features = CFG['target_token_dim']
+      else:
+        num_features = num_features // 2
+      down = tf.keras.layers.Dense(num_features, **dense_settings)
+      up = tf.keras.layers.Dense(num_features * 2, **dense_settings)
+      self.funnel_down.append(down)
+      self.funnel_up.insert(0, up)
+
+
+  def compile(self, optimizer, loss_fn, loss_object , metric_fn, debug=True):
+    super(GestaltModel, self).compile()
+    self.optimizer = optimizer
+    self.loss_fn = loss_fn
+    self.loss_object = loss_object
+    self.metric_fn = metric_fn
+    self.train_step = MethodType(train_step, self)
+    self.test_step = MethodType(test_step, self)
+
+
+  def call(self, tokens):
+    assert 'input_ids' in tokens
+    assert 'attention_mask' in tokens
+
+    # LANG
+    x = self.lang_encoder(tokens)
+
+    # DOWN
+    for down in self.funnel_down:
+      x = down(x)
+      x = tf.nn.leaky_relu(x)
+      print(x.shape)
+    
+    # VISION
+    Z = tf.reshape(x, [CFG['batch_size'], -1])
+    imgs = self.generator(Z)
+    if CFG['use_aug']:
+      aug_imgs = self.noisy_channel(imgs, self.difficulty)
+    else:
+      aug_imgs = imgs
+    Z_pred = self.decoder(aug_imgs)
+    # now: unfortunately some potential data loss. hey, it happens
+    Z_pred = Z_pred[:, :CFG['vision_model_size']]
+
+    # UP
+    x_out = tf.reshape(Z_pred, [CFG['batch_size'], CFG['max_len'], -1])
+    for up in self.funnel_up:
+      x_out = up(x_out)
+      x_out = tf.nn.leaky_relu(x_out)
+      print(x_out.shape)
+
+    # LANG
+    seq_pred = self.lang_decoder(x_out)
+    return {
+      'prediction': seq_pred,
+      'metadata': {
+        'x': x,
+        'Z': Z,
+        'imgs': imgs,
+        'aug_imgs': aug_imgs,
+        'Z_pred': Z_pred,
+        'x_out': x_out
+      }
     }
 
 
@@ -191,30 +287,44 @@ def get_model():
     model = LangAutoencoder()
   elif CFG['full_model'] == 'vision':
     return VisionModel()
+  elif CFG['full_model'] == 'gestalt':
+    return GestaltModel()
   else:
     raise ValueError
   return model
 
 
+def crossentropy_loss():
+  def loss_fn(true, pred, loss_object):
+    loss = loss_object(true, pred)
+    loss = tf.math.reduce_sum(loss)
+    return loss
+  loss_object = tf.keras.losses.CategoricalCrossentropy(
+    from_logits=True,
+    label_smoothing=CFG['label_smoothing'],
+    reduction=tf.keras.losses.Reduction.SUM
+  )
+  return loss_fn, loss_object
+
+
 def get_loss_fn():
-  if CFG['full_model'] in ['language']:
-    return sequence_reconstruction_loss
+  if CFG['full_model'] in ['language', 'gestalt']:
+    loss_fn, loss_object = sequence_reconstruction_loss()
+    return loss_fn, loss_object
   elif CFG['full_model'] in ['vision']:
-    return tf.keras.losses.CategoricalCrossentropy(
-      from_logits=True,
-      label_smoothing=CFG['label_smoothing'])
+    loss_fn, loss_object = crossentropy_loss()
+    return loss_fn, loss_object
   else:
     raise ValueError
 
 
 def get_metric_fn():
-  if CFG['full_model'] in ['language']:
+  if CFG['full_model'] in ['language', 'gestalt']:
     return sequence_reconstruction_accuracy
   elif CFG['full_model'] in ['vision']:
     return tf.keras.metrics.CategoricalAccuracy()
   else:
     raise ValueError
-
 
 
 def get_optim(model):
@@ -229,6 +339,28 @@ class DifficultyManager(tf.keras.callbacks.Callback):
       self.model.difficulty.assign_add(-1)
     if logs['recon_acc'] > 0.95 and self.model.difficulty < 15:
       self.model.difficulty.assign_add(1)
+
+
+class ImageSnapshotManager(tf.keras.callbacks.Callback):
+  def __init__(self, log_dir):
+    self.writer = tf.summary.create_file_writer(log_dir)
+
+
+  def on_epoch_end(self, epoch, logs):
+    if epoch % CFG['img_summaries_every_n_epochs'] == 0:
+      imgs = logs['imgs']
+      aug_imgs = logs['aug_imgs']
+      rand_idx = tf.random.uniform([CFG['img_summaries_per_epoch']], 0, CFG['batch_size'] -1, dtype=tf.int32)
+      # gather random images
+      imgs = tf.gather(imgs, rand_idx)
+      aug_imgs = tf.gather(aug_imgs, rand_idx)
+      # concatenate together
+      imgs = tf.concat(tf.unstack(imgs, axis=0), axis=1)
+      aug_imgs = tf.concat(tf.unstack(aug_imgs, axis=0), axis=1)
+      img = tf.concat([imgs, aug_imgs], axis=0)[tf.newaxis]
+      # upload single snapshot collage
+      with self.writer.as_default():
+        tf.summary.image('snapshot', img, step=epoch)
 
 
 if __name__ == "__main__":

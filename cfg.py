@@ -16,12 +16,24 @@ def validate_cfg(cfg):
 
 
 def populate_cfg(cfg):
+  cfg['ideal_vision_model_size'] = cfg['vision_model_size']
   if cfg['use_gcs']:
     gcs_credentials_path = os.path.join(file_dir, "gestalt-graph-59b01bb414f3.json")
     os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = gcs_credentials_path
     cfg['path_prefix'] = cfg['gcs_prefix']
   else:
     cfg['path_prefix'] = cfg['local_prefix']
+  # make some changes to parameters if using gestalt model
+  if cfg['full_model'] == 'gestalt':
+    target_token_dim = ((cfg['vision_model_size'] // cfg['max_len']) // 8) * 8
+    new_vision_model_size = target_token_dim * cfg['max_len']
+    cfg['target_token_dim'] = target_token_dim
+    cfg['vision_model_size'] = new_vision_model_size
+  # TPU
+  cfg['TPU'] = False
+  if 'IS_TPU' in os.environ:
+    if os.environ['IS_TPU'] == 'y':
+      cfg['TPU'] = True
   return cfg
 
 
@@ -54,6 +66,7 @@ def get_config():
     set_config(cfg)
     save_config(cfg)
     return CFG
+
 
 if __name__ == "__main__":
   CFG = get_config()

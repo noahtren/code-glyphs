@@ -75,15 +75,22 @@ def gcs_folder_exists(file_name):
 
 
 if __name__ == "__main__":
+  code_only = True
+  if code_only:
+    exts = ['.py', '.json', '.yaml']
+  else:
+    exts = ['.py', '.json', '.yaml', '.h5']
+
+  # base path
   for file in os.listdir(code_path):
-    if file.endswith('.py') or file.endswith('.json'):
-      with open(os.path.join(code_path, file), 'r') as f:
-        py_code = f.read()
+    if any([file.endswith(ext) for ext in exts]):
       print(f"Uploading {file}")
-      s3_upload_data(f"ccn/{file}", py_code)
-  # upload setup.py
-  file = '../setup.py'
-  with open(os.path.join(code_path, file), 'r') as f:
-    py_code = f.read()
-  print("Uploading setup.py")
-  s3_upload_data("setup.py", py_code)
+      s3_upload_file(os.path.join(code_path, file), f"cg/{file}")
+
+  # relative paths
+  for sub in ['bit', 'models']:
+    sub_path = os.path.join(code_path, sub)
+    for file in os.listdir(sub_path):
+      if any([file.endswith(ext) for ext in exts]):
+        print(f"Uploading {sub}/{file}")
+        s3_upload_file(os.path.join(code_path, f"{sub}/{file}"), f"cg/{sub}/{file}")

@@ -12,6 +12,8 @@ import tensorflow as tf
 
 from bit.bit_resnet import ResnetV2
 
+code_path = os.path.dirname(os.path.abspath(__file__))
+
 KNOWN_MODELS = {
   f'{bit}-R{l}x{w}': f'gs://bit_models/{bit}-R{l}x{w}.h5'
   for bit in ['BiT-S', 'BiT-M']
@@ -38,7 +40,14 @@ def get_model(model_name='BiT-M-R50x1'):
     dtype=tf.float32
   )
   model.build((None, None, None, 3))
-  model_path = os.path.join('models', f"{model_name}.h5")
+  orig_model_path = os.path.join(code_path, 'models', f"{model_name}.h5")
+  assert os.path.exists(orig_model_path), f"Backup model {orig_model_path} doesn't exist"
+  model_path = os.path.join('model_cache', f"{model_name}.h5")
+  if not os.path.exists(model_path):
+    os.makedirs(os.path.dirname(model_path), exist_ok=True)
+    copy_expr = f"cp {orig_model_path} {model_path}"
+    print(f"Running {copy_expr}")
+    os.system(copy_expr)
   model.load_weights(model_path)
   model._head = None
   return model

@@ -97,28 +97,32 @@ class LangDecoder(tf.keras.Model):
   def call(self, features, training=True):
     """Return tokens based on a batch of embeddings.
 
-    Features are of shape [batch_size, hidden_size]. Before predicting, this
-    function tiles the features to equal max_len.
+    Features are of shape [batch_size, max_len, vision_model_size]
     """
     logits = self.lm(None, inputs_embeds=features, training=training)[0]
     return logits
 
 
-def sequence_reconstruction_loss(code_tokens, logits):
-  """Loss an entire sequence predicted in one step. Evaluates each token
+def sequence_reconstruction_loss():
+  """Loss for an entire sequence predicted in one step. Evaluates each token
   individually.
   """
-  vocab_size = logits.shape[2]
-  input_ids = code_tokens['input_ids']
-  labels = tf.one_hot(input_ids, depth=vocab_size)
-  loss = tf.keras.losses.categorical_crossentropy(
-    labels,
-    logits,
+  def loss_fn(code_tokens, logits, loss_object):
+    vocab_size = logits.shape[2]
+    input_ids = code_tokens['input_ids']
+    labels = tf.one_hot(input_ids, depth=vocab_size)
+    loss = loss_object(
+      labels,
+      logits,
+    )
+    loss = tf.math.reduce_sum(loss)
+    return loss
+  loss_object = tf.keras.losses.CategoricalCrossentropy(
     from_logits=True,
-    label_smoothing=CFG['label_smoothing']
+    label_smoothing=CFG['label_smoothing'],
+    reduction=tf.keras.losses.Reduction.SUM
   )
-  loss = tf.math.reduce_sum(loss)
-  return loss
+  return loss_fn, loss_object
 
 
 def sequence_reconstruction_accuracy(code_tokens, logits):

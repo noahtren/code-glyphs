@@ -3,3 +3,4 @@ __pycache__/
 code_data/
 logs/
 *.json
+*.h5
