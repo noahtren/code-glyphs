@@ -60,7 +60,7 @@ def train_step(self, x):
   with tf.GradientTape() as tape:
     result = self.call(x)
     y = result['prediction']
-    losses['recon_loss'] = self.loss_fn(x, y, self.loss_object)
+    losses['recon_loss'] = self.loss_fn(x, y, self.loss_object) / self.global_batch_size
     for sub_model in self.layers:
       sub_model_loss = tf.math.reduce_sum(sub_model.losses)
       losses[f"{sub_model.name}_reg_loss"] = sub_model_loss
@@ -88,7 +88,7 @@ def test_step(self, x):
   losses = {}
   metrics = {}
   y = self.call(x)['prediction']
-  losses['val_recon_loss'] = self.loss_fn(x, y, self.loss_object)
+  losses['val_recon_loss'] = self.loss_fn(x, y, self.loss_object) / self.global_batch_size
   metrics['val_recon_acc'] = self.metric_fn(x, y)
   return {**losses, **metrics}
 
@@ -112,7 +112,7 @@ class LangAutoencoder(tf.keras.Model):
       self.funnel_up.insert(0, up)
 
 
-  def compile(self, optimizer, loss_fn, loss_object , metric_fn, debug=True):
+  def compile(self, optimizer, loss_fn, loss_object , metric_fn, num_replicas, debug=True):
     super(LangAutoencoder, self).compile()
     self.optimizer = optimizer
     self.loss_fn = loss_fn
@@ -120,6 +120,7 @@ class LangAutoencoder(tf.keras.Model):
     self.metric_fn = metric_fn
     self.train_step = MethodType(train_step, self)
     self.test_step = MethodType(test_step, self)
+    self.global_batch_size = num_replicas * CFG['batch_size']
 
 
   def call(self, tokens):
@@ -164,7 +165,7 @@ class VisionModel(tf.keras.Model):
     )
 
 
-  def compile(self, optimizer, loss_fn, loss_object , metric_fn, debug=True):
+  def compile(self, optimizer, loss_fn, loss_object , metric_fn, num_replicas, debug=True):
     super(VisionModel, self).compile()
     self.optimizer = optimizer
     self.loss_fn = loss_fn
@@ -172,6 +173,7 @@ class VisionModel(tf.keras.Model):
     self.metric_fn = metric_fn
     self.train_step = MethodType(train_step, self)
     self.test_step = MethodType(test_step, self)
+    self.global_batch_size = num_replicas * CFG['batch_size']
 
 
   def call(self, x):
@@ -225,7 +227,7 @@ class GestaltModel(tf.keras.Model):
       self.funnel_up.insert(0, up)
 
 
-  def compile(self, optimizer, loss_fn, loss_object , metric_fn, debug=True):
+  def compile(self, optimizer, loss_fn, loss_object , metric_fn, num_replicas, debug=True):
     super(GestaltModel, self).compile()
     self.optimizer = optimizer
     self.loss_fn = loss_fn
@@ -233,6 +235,7 @@ class GestaltModel(tf.keras.Model):
     self.metric_fn = metric_fn
     self.train_step = MethodType(train_step, self)
     self.test_step = MethodType(test_step, self)
+    self.global_batch_size = num_replicas * CFG['batch_size']
 
 
   def call(self, tokens):

@@ -54,7 +54,8 @@ def main():
     model.compile(optimizer=optim,
                   loss_fn=loss_fn,
                   loss_object=loss_object,
-                  metric_fn=metric_fn)
+                  metric_fn=metric_fn,
+                  num_replicas=num_replicas)
     model.run_eagerly = CFG['eager_mode']
 
     # train loop
