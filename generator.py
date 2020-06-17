@@ -82,15 +82,15 @@ class ResidualBlock(tf.keras.layers.Layer):
     start_x = x
 
     x = self.batch_norms[0](x)
-    x = tf.nn.leaky_relu(x)
+    x = tf.nn.swish(x)
     x = self.first_conv(x)
 
     x = self.batch_norms[1](x)
-    x = tf.nn.leaky_relu(x)
+    x = tf.nn.swish(x)
     x = self.second_conv(x)
 
     x = self.batch_norms[2](x)
-    x = tf.nn.leaky_relu(x)
+    x = tf.nn.swish(x)
     x = self.third_conv(x)
 
     x = x + start_x
@@ -181,7 +181,7 @@ class Generator(tf.keras.Model):
         start_loc = loc
         loc = embed(loc)
         loc = norm(loc)
-        loc = tf.nn.leaky_relu(loc)
+        loc = tf.nn.swish(loc)
         if i != 0: loc = loc + start_loc
 
       print(f"Loc: {loc.shape}")
@@ -192,7 +192,7 @@ class Generator(tf.keras.Model):
         start_Z = block_Z
         block_Z = embed(block_Z)
         block_Z = norm(block_Z)
-        block_Z = tf.nn.leaky_relu(block_Z)
+        block_Z = tf.nn.swish(block_Z)
         if i != 0: block_Z = block_Z + start_Z
 
       print(f"Z: {block_Z.shape}")

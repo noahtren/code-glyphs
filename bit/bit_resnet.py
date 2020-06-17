@@ -22,10 +22,13 @@ def add_name_prefix(name, prefix=None):
   return prefix + "/" + name if prefix else name
 
 
-class ReLU(tf.keras.layers.ReLU):
+class Swish(tf.keras.layers.Layer):
 
   def compute_output_shape(self, input_shape):
     return tf.TensorShape(input_shape)
+
+  def call(self, x):
+    return tf.nn.swish(x)
 
 
 class PaddingFromKernelSize(tf.keras.layers.Layer):
@@ -98,7 +101,7 @@ class BottleneckV2Unit(tf.keras.layers.Layer):
     self._proj = None
     self._unit_a = tf.keras.Sequential([
         normalization.GroupNormalization(name="group_norm"),
-        ReLU(),
+        Swish(),
     ], name="a")
     self._unit_a_conv = StandardizedConv2D(
         filters=num_filters,
@@ -110,7 +113,7 @@ class BottleneckV2Unit(tf.keras.layers.Layer):
 
     self._unit_b = tf.keras.Sequential([
         normalization.GroupNormalization(name="group_norm"),
-        ReLU(),
+        Swish(),
         PaddingFromKernelSize(kernel_size=3),
         StandardizedConv2D(
             filters=num_filters,
@@ -124,7 +127,7 @@ class BottleneckV2Unit(tf.keras.layers.Layer):
 
     self._unit_c = tf.keras.Sequential([
         normalization.GroupNormalization(name="group_norm"),
-        ReLU(),
+        Swish(),
         StandardizedConv2D(
             filters=4 * num_filters,
             kernel_size=1,
@@ -193,7 +196,7 @@ class ResnetV2(tf.keras.Model):
           self._create_block(num_units=u, num_filters=f, stride=s, name=n))
     self._pre_head = [
         normalization.GroupNormalization(name="group_norm"),
-        ReLU(),
+        Swish(),
         tf.keras.layers.GlobalAveragePooling2D()
     ]
     self._head = None
