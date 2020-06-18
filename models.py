@@ -44,7 +44,7 @@ def variable_lr_map(model):
       unassigned_models.append(sub_model)
   for var in model.variables:
     if var.name not in name_lr_map:
-      if not var.name.startswith('difficulty'):
+      if not any([var.name.startswith(s) for s in ['difficulty', 'current_lr']]):
         unassigned_variables.append(var)
   if unassigned_variables != [] or unassigned_models != []:
     print("Problem: there are some unassigned values in the learning rate multiplier.")
@@ -79,7 +79,7 @@ def train_step(self, x):
 
   if hasattr(self, 'difficulty'): metrics['difficulty'] = self.difficulty
 
-  return {**losses, **metrics, **result['metadata']}
+  return {**losses, **metrics, **result['metadata'], 'current_lr': self.current_lr}
 
 
 def test_step(self, x):
@@ -102,6 +102,11 @@ class LangAutoencoder(tf.keras.Model):
     self.latent_size = (CFG['language_model_size'] // (2 ** CFG['lang_autoencoder_r'])) * CFG['max_len']
     self.funnel_down = []
     self.funnel_up = []
+    self.current_lr = tf.Variable(
+      tf.convert_to_tensor(1., tf.float32),
+      trainable=False,
+      name='current_lr'
+    )
     print(f"AUTOENCODER LATENT DIM: {self.latent_size}")
     for r in range(CFG['lang_autoencoder_r'] + 1):
       scale = 2 ** (r)
@@ -163,6 +168,11 @@ class VisionModel(tf.keras.Model):
       trainable=False,
       name='difficulty'
     )
+    self.current_lr = tf.Variable(
+      tf.convert_to_tensor(1., tf.float32),
+      trainable=False,
+      name='current_lr'
+    )
 
 
   def compile(self, optimizer, loss_fn, loss_object , metric_fn, num_replicas, debug=True):
@@ -211,6 +221,11 @@ class GestaltModel(tf.keras.Model):
       tf.convert_to_tensor(0, tf.int32),
       trainable=False,
       name='difficulty'
+    )
+    self.current_lr = tf.Variable(
+      tf.convert_to_tensor(1., tf.float32),
+      trainable=False,
+      name='current_lr'
     )
     # AUTOENCODER
     self.funnel_down = []
@@ -346,6 +361,7 @@ class DifficultyManager(tf.keras.callbacks.Callback):
 
 class ImageSnapshotManager(tf.keras.callbacks.Callback):
   def __init__(self, log_dir):
+    super(ImageSnapshotManager, self).__init__()
     self.writer = tf.summary.create_file_writer(log_dir)
 
 
@@ -364,6 +380,26 @@ class ImageSnapshotManager(tf.keras.callbacks.Callback):
       # upload single snapshot collage
       with self.writer.as_default():
         tf.summary.image('snapshot', img, step=epoch)
+
+
+class LearningRateManager(tf.keras.callbacks.Callback):
+  def __init__(self):
+    super(LearningRateManager, self).__init__()
+    self.steps = 0
+
+  def on_train_batch_end(self, batch, logs=None):
+    self.steps += 1
+    current_lr = 1
+    if CFG['use_warmup'] and self.steps < CFG['warmup_steps']:
+      current_lr = 1 * (self.steps / CFG['warmup_steps'])
+    elif CFG['use_decay']:
+      relative_steps = self.steps
+      if CFG['use_warmup']:
+        relative_steps = self.steps - CFG['warmup_steps']
+      current_lr = 1 * CFG['decay_rate'] ** (relative_steps / CFG['decay_steps'])
+
+    self.model.current_lr.assign(current_lr)
+    self.model.optimizer.lr = current_lr
 
 
 if __name__ == "__main__":

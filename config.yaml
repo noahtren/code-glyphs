@@ -1,6 +1,6 @@
 # LOGGING AND LOGISTICS
 local_prefix: ./
-run_name: cloud_gestalt_7
+run_name: local_optim_test
 use_gcs: true
 gcs_prefix: gs://code-glyphs/
 s3_bucket: gestalt-graph
@@ -9,7 +9,7 @@ img_summaries_per_epoch: 4
 img_summaries_every_n_epochs: 5
 
 # MODELS
-full_model: gestalt
+full_model: vision
 full_models: [language, vision, gestalt]
 eager_mode: false
 
@@ -20,19 +20,19 @@ language_model_size: 768
 # -- VISION
 vision_model_size: 2048
 # -- -- CPPN
-img_dim: 96
-generator_levels: 4
-res_blocks_per_level: 6
-c_out: 5
+img_dim: 128
+generator_levels: 5
+res_blocks_per_level: 4
+c_out: 8
 composite_colors:
-  - "ff0000"
+  - "ff0000" # primary
   - "00ff00"
   - "0000ff"
-  - "ffffff"
+  - "ffff00" # secondary
+  - "00ffff"
+  - "ff00ff"
+  - "ffffff" # bw
   - "000000"
-  # - "cc9900"
-  # - "00bbcc"
-  # - "63cc00"
 
 # DATA
 max_len: 48
@@ -40,11 +40,18 @@ num_symbols: 64
 
 # TRAINING
 epochs: 500
-batch_size: 16
-lang_encoder_lr: 5.e-6 # BERT: peak value of 1-e4 with b=256
-lang_decoder_lr: 5.e-6
-generator_lr: 1.e-4
-decoder_lr: 1.e-4
-default_lr: 1.e-6
-label_smoothing: 0.001
+batch_size: 4
+lang_encoder_lr: 1.e-6 # BERT: peak value of 1-e4 with b=256
+lang_decoder_lr: 5.e-7
+generator_lr: 5.e-5
+decoder_lr: 5.e-5
+default_lr: 5.e-5
+label_smoothing: 0.0005
 use_aug: true
+
+# learning rate scheduling
+use_warmup: true
+warmup_steps: 1000
+use_decay: true
+decay_rate: 0.96
+decay_steps: 1000

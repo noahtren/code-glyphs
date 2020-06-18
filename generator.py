@@ -105,10 +105,10 @@ class BilinearAdditiveUpsampling(tf.keras.layers.Layer):
 
 
   def call(self, x):
-    """Sum/collapse every 4 feature channels
+    """Sum/collapse every 2 feature channels
     """
     x = self.upsample(x)
-    feature_collect = tf.reshape(tf.range(self.in_features), [-1, 4])
+    feature_collect = tf.reshape(tf.range(self.in_features), [-1, 2])
     features = tf.gather(x, feature_collect, axis=-1)
     x = tf.math.reduce_sum(features, axis=-1)
     return x

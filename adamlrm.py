@@ -186,8 +186,6 @@ class AdamLRM(optimizer_v2.OptimizerV2):
     m = self.get_slot(var, 'm')
     v = self.get_slot(var, 'v')
 
-
-    lr_t = coefficients['lr_t']
     for k in self._lrm_names:
       if var.name.startswith(k):
         lr_t = coefficients['lr_t'] * self._get_hyper(f'lrm_{k}', var.dtype)
@@ -279,3 +277,29 @@ class AdamLRM(optimizer_v2.OptimizerV2):
     for k in self._lrm_names:
       config[k] = self._serialize_hyperparameter(f'lrm_{k}')
     return config
+
+
+if __name__ == "__main__":
+  """Test changing learning rate
+  """
+
+  optim = AdamLRM()
+  optim.lr
+
+  inp = tf.keras.layers.Input(shape=(10,))
+  x = tf.keras.layers.Dense(16)(inp)
+  model = tf.keras.Model(inputs=[inp], outputs=[x])
+  model.compile(
+    optimizer=optim,
+    loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True)
+  )
+  model.run_eagerly = True
+
+  d_x = tf.random.normal((5, 10), dtype=tf.float32)
+  d_y = tf.random.normal((5, 16), dtype=tf.float32)
+  
+  model.fit(x=d_x, y=d_y)
+
+  model.optimizer.lr = 0.05
+
+  model.fit(x=d_x, y=d_y)

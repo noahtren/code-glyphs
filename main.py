@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from cfg import get_config; CFG = get_config()
 from data import get_dataset
 from models import get_model, get_optim, get_loss_fn, get_metric_fn, \
-  DifficultyManager, ImageSnapshotManager
+  DifficultyManager, ImageSnapshotManager, LearningRateManager
 
 
 def main():
@@ -38,6 +38,8 @@ def main():
     tbc = tf.keras.callbacks.TensorBoard(log_dir=logdir)
     snapc = ImageSnapshotManager(log_dir=logdir)
     diffc = DifficultyManager()
+    lrmc = LearningRateManager()
+    callbacks = [tbc, snapc, diffc, lrmc]
 
     # build and compile model
     # have to run inference first
@@ -62,7 +64,7 @@ def main():
     model.fit(x=ds,
               validation_data=val_ds,
               epochs=CFG['epochs'],
-              callbacks=[tbc, diffc, snapc],
+              callbacks=callbacks,
     )
 
 
