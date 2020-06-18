@@ -143,7 +143,7 @@ class Generator(tf.keras.Model):
       Z_norms = [tf.keras.layers.BatchNormalization() for _ in range(3)]
       res_blocks = [ResidualBlock(filters) for _ in range(CFG['res_blocks_per_level'])]
       up_layer = BilinearAdditiveUpsampling(filters)
-      filters = filters // 4
+      filters = filters // 2
       self.loc_embeds.append(loc_embeds)
       self.loc_norms.append(loc_norms)
       self.Z_embeds.append(Z_embeds)

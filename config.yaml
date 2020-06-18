@@ -1,6 +1,6 @@
 # LOGGING AND LOGISTICS
 local_prefix: ./
-run_name: cloud_gestalt_6
+run_name: cloud_gestalt_7
 use_gcs: true
 gcs_prefix: gs://code-glyphs/
 s3_bucket: gestalt-graph
@@ -41,10 +41,10 @@ num_symbols: 64
 # TRAINING
 epochs: 500
 batch_size: 16
-lang_encoder_lr: 1.e-7 # BERT: peak value of 1-e4 with b=256
-lang_decoder_lr: 1.e-7
-generator_lr: 1.e-5
-decoder_lr: 1.e-5
-default_lr: 1.e-7
+lang_encoder_lr: 5.e-6 # BERT: peak value of 1-e4 with b=256
+lang_decoder_lr: 5.e-6
+generator_lr: 1.e-4
+decoder_lr: 1.e-4
+default_lr: 1.e-6
 label_smoothing: 0.001
 use_aug: true
