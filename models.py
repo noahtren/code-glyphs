@@ -28,6 +28,89 @@ lr_multiplier_models = {
 }
 
 
+# ============================== HELPER FUNCTIONS ==============================
+def perceptual_loss(features, max_pairs=1_000, MULTIPLIER=-1):
+  """Return a negative value, where greater magnitudes describe further distances.
+  This is to encourage samples to be perceptually more distant from each other.
+  i.e., they are repelled from each other.
+  """
+  b_s = features.shape[0]
+  num_pairs = (b_s * (b_s - 1)) // 2
+  pair_idxs = tf.where(tf.ones((b_s, b_s)))
+  non_matching_pairs = tf.squeeze(tf.where(pair_idxs[:, 0] < pair_idxs[:, 1]))
+  pair_idxs = tf.gather(pair_idxs, non_matching_pairs)
+
+  num_pairs = min([num_pairs, max_pairs])
+  use_pair_idxs = tf.random.uniform([num_pairs], minval=0, maxval=num_pairs, dtype=tf.int32)
+  pair_idxs = tf.gather(pair_idxs, use_pair_idxs)
+
+  # features = tf.math.reduce_mean(features, [1, 2])
+  feature_pairs = tf.gather(features, pair_idxs)
+  diffs = feature_pairs[:, 0] - feature_pairs[:, 1]
+  diffs = tf.math.reduce_mean(tf.abs(diffs), axis=-1)
+
+  percept_loss = tf.math.reduce_mean(diffs)
+  percept_loss = tf.sqrt(percept_loss)
+  percept_loss = percept_loss * MULTIPLIER
+  return percept_loss
+
+
+def vector_distance_loss(rep1, rep2, max_pairs=1_000):
+  """Experimental loss score based on trying to match the distance between
+  corresponding pairs of representations, using logistic loss between distances
+  normalized from 0 to 1. No idea how stable this will be!
+  This use case: match the distances between pairs of images perceptions with
+  the distances between pairs of symbol labels.
+  Update: this is likely not necessary because graph pretraining actually hasn't
+  shown to provide a major qualitative improvement, so there is nothing
+  particularly special about the graph embeddings vs. visual latent spaces.
+  Still curious!
+  """
+  n = rep1.shape[0]
+  assert n >= 4
+  num_pairs = (rep1.shape[0] * (rep1.shape[0] - 1)) // 2
+  pairs = tf.where(tf.ones((n, n)))
+
+  # get diagonal of adjacency matrix indices
+  unique_pairs = tf.squeeze(tf.where(pairs[:, 0] < pairs[:, 1]))
+  pairs = tf.gather(pairs, unique_pairs)
+  num_pairs = min([num_pairs, max_pairs])
+  use_pair_idxs = tf.random.uniform([num_pairs], minval=0, maxval=num_pairs, dtype=tf.int32)
+  pairs = tf.gather(pairs, use_pair_idxs)
+  
+  # DISTANCES 1
+  pairs1 = tf.gather(rep1, pairs)
+  diffs1 = tf.abs(pairs1[:, 0] - pairs1[:, 1])
+  # get average feature distance
+  diffs1 = tf.math.reduce_mean(diffs1, axis=tf.range(tf.rank(diffs1) - 1) + 1)
+
+  # DISTANCES 2
+  pairs2 = tf.gather(rep2, pairs)
+  diffs2 = tf.abs(pairs2[:, 0] - pairs2[:, 1])
+  # get average feature distance
+  diffs2 = tf.math.reduce_mean(diffs2, axis=tf.range(tf.rank(diffs2) - 1) + 1)
+
+  # NORMALIZE DISTANCES
+  def zero_one_normalize(tensor, epsilon=1e-7):
+    tensor = tensor - tf.math.reduce_min(tensor)
+    tensor = tensor + epsilon
+    tensor = tensor / tf.math.reduce_max(tensor)
+    return tensor
+
+  diffs1 = zero_one_normalize(diffs1)
+  diffs2 = zero_one_normalize(diffs2)
+  
+  # FIND THE DISTANCE BETWEEN DISTANCES (haha)
+  diffs1 = diffs1[:, tf.newaxis]
+  diffs2 = diffs2[:, tf.newaxis]
+  error = tf.keras.losses.mean_squared_error(diffs1, diffs2)
+  # error = tf.keras.losses.binary_crossentropy(diffs1, diffs2)
+  error = tf.math.reduce_mean(error)
+  # this is positive because we want points to be similarly distance
+  # regardless of the representation medium
+  return error
+
+
 # ============================== MODELING ==============================
 def variable_lr_map(model):
   """Map each variable name to learning rate based on submodel
@@ -64,6 +147,14 @@ def train_step(self, x):
     for sub_model in self.layers:
       sub_model_loss = tf.math.reduce_sum(sub_model.losses)
       losses[f"{sub_model.name}_reg_loss"] = sub_model_loss
+
+    # perceptual loss
+    if CFG['use_perceptual_loss']:
+      percept_loss = perceptual_loss(
+        result['metadata']['percept'],
+        # result['metadata']['Z']
+      )
+      losses['percept_loss'] = percept_loss
 
     # sum all losses
     loss_sum = 0.
@@ -103,7 +194,7 @@ class LangAutoencoder(tf.keras.Model):
     self.funnel_down = []
     self.funnel_up = []
     self.current_lr = tf.Variable(
-      tf.convert_to_tensor(1., tf.float32),
+      tf.convert_to_tensor(0., tf.float32),
       trainable=False,
       name='current_lr'
     )
@@ -115,6 +206,8 @@ class LangAutoencoder(tf.keras.Model):
       up = tf.keras.layers.Dense(num_features, **dense_settings)
       self.funnel_down.append(down)
       self.funnel_up.insert(0, up)
+    self.funnel_down = tuple(self.funnel_down)
+    self.funnel_up = tuple(self.funnel_up)
 
 
   def compile(self, optimizer, loss_fn, loss_object , metric_fn, num_replicas, debug=True):
@@ -160,6 +253,10 @@ class VisionModel(tf.keras.Model):
     self._name = 'root'
     self.generator = Generator()
     self.decoder = BiT()
+    self.perceptor = None
+    if CFG['use_perceptual_loss']:
+      self.perceptor = BiT()
+      self.perceptor.trainable = False
     self.symbol_embed = tf.keras.layers.Dense(CFG['vision_model_size'], **dense_settings)
     self.symbol_predict = tf.keras.layers.Dense(CFG['num_symbols'], **dense_settings)
     self.noisy_channel = get_noisy_channel()
@@ -169,7 +266,7 @@ class VisionModel(tf.keras.Model):
       name='difficulty'
     )
     self.current_lr = tf.Variable(
-      tf.convert_to_tensor(1., tf.float32),
+      tf.convert_to_tensor(0., tf.float32),
       trainable=False,
       name='current_lr'
     )
@@ -194,12 +291,17 @@ class VisionModel(tf.keras.Model):
     else:
       aug_imgs = imgs
     Z_pred = self.decoder(aug_imgs)
+    if CFG['use_perceptual_loss']:
+      _, percept = self.perceptor(aug_imgs, perceptual=True)
+    else:
+      percept = None
     x_pred = self.symbol_predict(Z_pred)
     return {
       'prediction': x_pred,
       'metadata': {
         'imgs': imgs,
         'aug_imgs': aug_imgs,
+        'percept': percept,
         'Z': Z,
         'Z_pred': Z_pred
       }
@@ -216,6 +318,10 @@ class GestaltModel(tf.keras.Model):
     # VISION
     self.generator = Generator()
     self.decoder = BiT()
+    self.perceptor = None
+    if CFG['use_perceptual_loss']:
+      self.perceptor = BiT()
+      self.perceptor.trainable = False
     self.noisy_channel = get_noisy_channel()
     self.difficulty = tf.Variable(
       tf.convert_to_tensor(0, tf.int32),
@@ -223,7 +329,7 @@ class GestaltModel(tf.keras.Model):
       name='difficulty'
     )
     self.current_lr = tf.Variable(
-      tf.convert_to_tensor(1., tf.float32),
+      tf.convert_to_tensor(0., tf.float32),
       trainable=False,
       name='current_lr'
     )
@@ -240,6 +346,8 @@ class GestaltModel(tf.keras.Model):
       up = tf.keras.layers.Dense(num_features * 2, **dense_settings)
       self.funnel_down.append(down)
       self.funnel_up.insert(0, up)
+    self.funnel_down = tuple(self.funnel_down)
+    self.funnel_up = tuple(self.funnel_up)
 
 
   def compile(self, optimizer, loss_fn, loss_object , metric_fn, num_replicas, debug=True):
@@ -274,6 +382,10 @@ class GestaltModel(tf.keras.Model):
     else:
       aug_imgs = imgs
     Z_pred = self.decoder(aug_imgs)
+    if CFG['use_perceptual_loss']:
+      _, percept = self.perceptor(aug_imgs, perceptual=True)
+    else:
+      percept = None
     # now: unfortunately some potential data loss. hey, it happens
     Z_pred = Z_pred[:, :CFG['vision_model_size']]
 
@@ -293,6 +405,7 @@ class GestaltModel(tf.keras.Model):
         'Z': Z,
         'imgs': imgs,
         'aug_imgs': aug_imgs,
+        'percept': percept,
         'Z_pred': Z_pred,
         'x_out': x_out
       }
@@ -347,15 +460,26 @@ def get_metric_fn():
 
 def get_optim(model):
   name_lr_map = variable_lr_map(model)
-  optim = AdamLRM(lr=1., lr_multiplier=name_lr_map)
+  optim = AdamLRM(lr=0., lr_multiplier=name_lr_map)
   return optim
+
+
+# ============================== CALLBACKS ==============================
+
+
+def get_best_acc(difficulty):
+  """Linear increase in required accuracy before going to the
+  next difficulty level. Part of curriculum learning.
+  """
+  return 0.9 + 0.1 * (difficulty / 16)
 
 
 class DifficultyManager(tf.keras.callbacks.Callback):
   def on_epoch_end(self, epoch, logs):
     if logs['recon_acc'] < 0.3 and self.model.difficulty > 0:
       self.model.difficulty.assign_add(-1)
-    if logs['recon_acc'] > 0.95 and self.model.difficulty < 15:
+    target_acc = get_best_acc(self.model.difficulty)
+    if logs['recon_acc'] > target_acc and self.model.difficulty < 15:
       self.model.difficulty.assign_add(1)
 
 
@@ -400,6 +524,25 @@ class LearningRateManager(tf.keras.callbacks.Callback):
 
     self.model.current_lr.assign(current_lr)
     self.model.optimizer.lr = current_lr
+
+
+class CheckpointSaver(tf.keras.callbacks.Callback):
+  def __init__(self):
+    self.best_acc = 0.
+    self.ckpt_counter = CFG['ckpt_every_n_epochs']
+  
+  def on_epoch_end(self, epoch, logs):
+    if self.ckpt_counter > 0:
+      self.ckpt_counter -= 1
+    else:
+      capped_acc = min([logs['recon_acc'], get_best_acc(self.model.difficulty)])
+      if capped_acc > self.best_acc:
+        self.best_acc = capped_acc
+        print(f"\nSaving new weights with best accuracy of {capped_acc}")
+        self.model.save_weights(
+          f"{CFG['path_prefix']}checkpoints/{CFG['run_name']}/best"
+        )
+        self.ckpt_counter = CFG['ckpt_every_n_epochs']
 
 
 if __name__ == "__main__":

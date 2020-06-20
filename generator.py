@@ -126,7 +126,6 @@ class Generator(tf.keras.Model):
     self.loc_embeds = []
     self.loc_norms = []
     self.Z_embeds = []
-    self.Z_norms = []
     self.res_blocks = []
     self.up_layer = []
 
@@ -139,15 +138,13 @@ class Generator(tf.keras.Model):
         padding='same',
         ) for _ in range(3)]
       loc_norms = [tf.keras.layers.BatchNormalization() for _ in range(3)]
-      Z_embeds = [tf.keras.layers.Dense(filters, **dense_settings) for _ in range(3)]
-      Z_norms = [tf.keras.layers.BatchNormalization() for _ in range(3)]
+      Z_embeds = [tf.keras.layers.Dense(filters, **dense_settings) for _ in range(6)]
       res_blocks = [ResidualBlock(filters) for _ in range(CFG['res_blocks_per_level'])]
       up_layer = BilinearAdditiveUpsampling(filters)
       filters = filters // 2
       self.loc_embeds.append(loc_embeds)
       self.loc_norms.append(loc_norms)
       self.Z_embeds.append(Z_embeds)
-      self.Z_norms.append(Z_norms)
       self.res_blocks.append(res_blocks)
       self.up_layer.append(up_layer)
 
@@ -176,31 +173,31 @@ class Generator(tf.keras.Model):
 
     for block_i in range(CFG['generator_levels']):
       # get pixel locations and embed pixels
-      loc = generate_scaled_coordinate_hints(1, res, res)
-      for i, (embed, norm) in enumerate(zip(self.loc_embeds[block_i], self.loc_norms[block_i])):
-        start_loc = loc
-        loc = embed(loc)
-        loc = norm(loc)
-        loc = tf.nn.swish(loc)
-        if i != 0: loc = loc + start_loc
+      # loc = generate_scaled_coordinate_hints(1, res, res)
+      # for i, (embed, norm) in enumerate(zip(self.loc_embeds[block_i], self.loc_norms[block_i])):
+      #   start_loc = loc
+      #   loc = embed(loc)
+      #   loc = norm(loc)
+      #   loc = tf.nn.swish(loc)
+      #   if i != 0: loc = loc + start_loc
 
-      print(f"Loc: {loc.shape}")
+      # print(f"Loc: {loc.shape}")
 
       # embed Z vector
       block_Z = Z
-      for i, (embed, norm) in enumerate(zip(self.Z_embeds[block_i], self.Z_norms[block_i])):
+      for i, embed in enumerate(self.Z_embeds[block_i]):
         start_Z = block_Z
         block_Z = embed(block_Z)
-        block_Z = norm(block_Z)
         block_Z = tf.nn.swish(block_Z)
         if i != 0: block_Z = block_Z + start_Z
 
       print(f"Z: {block_Z.shape}")
 
       # concatenate Z to locations
-      loc = tf.tile(loc, [batch_size, 1, 1, 1])
+      # loc = tf.tile(loc, [batch_size, 1, 1, 1])
       block_Z = tf.tile(block_Z[:, tf.newaxis, tf.newaxis], [1, res, res, 1])
-      x = loc + block_Z if x is None else loc + block_Z + x
+      # x = loc + block_Z if x is None else loc + block_Z + x
+      x = block_Z if x is None else block_Z + x
       print(f"x: {x.shape}")
 
       # residual layer processing

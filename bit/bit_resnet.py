@@ -252,12 +252,19 @@ class ResnetV2(tf.keras.Model):
       current_shape = (current_shape[0], current_shape[3])
     return tf.TensorShape(current_shape)
 
-  def call(self, x):
+  def call(self, x, get_block:int=None):
+    return_block = None
     x = self._root(x)
-    for block in self._blocks:
+    for i, block in enumerate(self._blocks):
       x = block(x)
+      # get output of a particular block
+      if get_block == i: return_block = x
     for layer in self._pre_head:
       x = layer(x)
     if self._head is not None:
       x = self._head(x)
-    return x
+    # return
+    if get_block is not None:
+      return x, return_block
+    else:
+      return x

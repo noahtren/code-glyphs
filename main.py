@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from cfg import get_config; CFG = get_config()
 from data import get_dataset
 from models import get_model, get_optim, get_loss_fn, get_metric_fn, \
-  DifficultyManager, ImageSnapshotManager, LearningRateManager
+  DifficultyManager, ImageSnapshotManager, LearningRateManager, CheckpointSaver
 
 
 def main():
@@ -39,10 +39,11 @@ def main():
     snapc = ImageSnapshotManager(log_dir=logdir)
     diffc = DifficultyManager()
     lrmc = LearningRateManager()
-    callbacks = [tbc, snapc, diffc, lrmc]
+    ckptc = CheckpointSaver()
+    callbacks = [tbc, snapc, diffc, lrmc, ckptc]
 
     # build and compile model
-    # have to run inference first
+    # (have to run inference first to populate variables)
     for val in ds.take(1):
       if CFG['full_model'] in ['vision']:
         val = val[:CFG['batch_size']]
@@ -64,8 +65,7 @@ def main():
     model.fit(x=ds,
               validation_data=val_ds,
               epochs=CFG['epochs'],
-              callbacks=callbacks,
-    )
+              callbacks=callbacks)
 
 
 if __name__ == "__main__":

@@ -13,6 +13,8 @@ def read_config():
 
 def validate_cfg(cfg):
   assert cfg['full_model'] in cfg['full_models'], f"Model type {cfg['full_model']} not understood"
+  if cfg['use_perceptual_loss']:
+    assert cfg['full_model'] in ['vision', 'gestalt'], "Can't use perceptual loss without vision components"
 
 
 def populate_cfg(cfg):

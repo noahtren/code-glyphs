@@ -1,6 +1,6 @@
 # LOGGING AND LOGISTICS
 local_prefix: ./
-run_name: local_optim_test
+run_name: prod_percept_nodist_test_3levels
 use_gcs: true
 gcs_prefix: gs://code-glyphs/
 s3_bucket: gestalt-graph
@@ -9,7 +9,7 @@ img_summaries_per_epoch: 4
 img_summaries_every_n_epochs: 5
 
 # MODELS
-full_model: vision
+full_model: gestalt
 full_models: [language, vision, gestalt]
 eager_mode: false
 
@@ -20,9 +20,9 @@ language_model_size: 768
 # -- VISION
 vision_model_size: 2048
 # -- -- CPPN
-img_dim: 128
-generator_levels: 5
-res_blocks_per_level: 4
+img_dim: 64
+generator_levels: 3
+res_blocks_per_level: 5
 c_out: 8
 composite_colors:
   - "ff0000" # primary
@@ -38,20 +38,24 @@ composite_colors:
 max_len: 48
 num_symbols: 64
 
+# alternate loss scores
+use_perceptual_loss: true
+
 # TRAINING
 epochs: 500
-batch_size: 4
-lang_encoder_lr: 1.e-6 # BERT: peak value of 1-e4 with b=256
+batch_size: 24
+lang_encoder_lr: 5.e-7 # BERT: peak value of 1-e4 with b=256
 lang_decoder_lr: 5.e-7
 generator_lr: 5.e-5
 decoder_lr: 5.e-5
 default_lr: 5.e-5
-label_smoothing: 0.0005
+label_smoothing: 0.0001
 use_aug: true
+ckpt_every_n_epochs: 100
 
 # learning rate scheduling
 use_warmup: true
 warmup_steps: 1000
 use_decay: true
-decay_rate: 0.96
-decay_steps: 1000
+decay_rate: 0.975
+decay_steps: 3000

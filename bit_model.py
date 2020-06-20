@@ -59,8 +59,14 @@ class BiT(tf.keras.Model):
     self.model = get_model()
 
 
-  def call(self, x):
-    return self.model(x)
+  def call(self, x, perceptual=False):
+    if perceptual:
+      x, percept = self.model(x, get_block=2)
+      percept = tf.math.reduce_mean(percept, axis=[1,2])
+      return x, percept
+    else:
+      x = self.model(x)
+      return x
 
 
 if __name__ == "__main__":
