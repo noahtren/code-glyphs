@@ -150,9 +150,9 @@ def train_step(self, x):
 
     # perceptual loss
     if CFG['use_perceptual_loss']:
-      percept_loss = perceptual_loss(
+      percept_loss = vector_distance_loss(
         result['metadata']['percept'],
-        # result['metadata']['Z']
+        result['metadata']['Z']
       )
       losses['percept_loss'] = percept_loss
 
@@ -539,8 +539,10 @@ class CheckpointSaver(tf.keras.callbacks.Callback):
       if capped_acc > self.best_acc:
         self.best_acc = capped_acc
         print(f"\nSaving new weights with best accuracy of {capped_acc}")
-        self.model.save_weights(
-          f"{CFG['path_prefix']}checkpoints/{CFG['run_name']}/best"
+        self.model.save(
+          f"{CFG['path_prefix']}checkpoints/{CFG['run_name']}/best",
+          include_optimizer=False,
+          save_format='tf',
         )
         self.ckpt_counter = CFG['ckpt_every_n_epochs']
 
