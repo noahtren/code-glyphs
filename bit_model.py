@@ -11,6 +11,7 @@ import code
 import tensorflow as tf
 
 from bit.bit_resnet import ResnetV2
+from cfg import get_config; CFG = get_config()
 
 code_path = os.path.dirname(os.path.abspath(__file__))
 
@@ -28,7 +29,11 @@ NUM_UNITS = {
 }
 
 
-def get_model(model_name='BiT-M-R50x1'):
+def get_model(percept=False):
+  if percept:
+    model_name = 'BiT-M-R50x1'
+  else:
+    model_name = CFG['vision_backbone']
   num_units = NUM_UNITS[model_name]
   filters_factor = int(model_name[-1])*4
   model = ResnetV2(
@@ -54,15 +59,14 @@ def get_model(model_name='BiT-M-R50x1'):
 
 
 class BiT(tf.keras.Model):
-  def __init__(self):
+  def __init__(self, percept=False):
     super(BiT, self).__init__()
-    self.model = get_model()
+    self.model = get_model(percept)
 
 
   def call(self, x, perceptual=False):
     if perceptual:
       x, percept = self.model(x, get_block=2)
-      percept = tf.math.reduce_mean(percept, axis=[1,2])
       return x, percept
     else:
       x = self.model(x)
@@ -71,3 +75,10 @@ class BiT(tf.keras.Model):
 
 if __name__ == "__main__":
   model = get_model()
+  x = tf.random.normal((2, 128, 128, 3), dtype=tf.float32)
+  y = tf.random.normal((2, 6144), dtype=tf.float32)
+  
+  optim = tf.keras.optimizers.Adam()
+  loss = tf.keras.losses.MeanSquaredError()
+  model.compile(optimizer=optim, loss=loss)
+  model.fit(x=x, y=y, epochs=1)

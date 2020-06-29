@@ -9,7 +9,7 @@ import tensorflow as tf
 from cfg import get_config; CFG = get_config()
 from language import LangEncoder, LangDecoder, \
   sequence_reconstruction_loss, sequence_reconstruction_accuracy
-from generator import Generator
+from generator import CNNGenerator, CPPNGenerator
 from bit_model import BiT
 from adamlrm import AdamLRM
 from aug import get_noisy_channel
@@ -19,22 +19,84 @@ dense_settings = {
   'bias_regularizer': tf.keras.regularizers.l2(1e-4),
 }
 
+
+class FunnelDown(tf.keras.Model):
+  """Reduce representations of each token.
+  """
+  def __init__(self):
+    super(FunnelDown, self).__init__()
+    self.l = []
+    num_features = CFG['language_model_size']
+    while num_features != CFG['target_down_token_dim']:
+      if num_features // 4 < CFG['target_down_token_dim']:
+        num_features = CFG['target_down_token_dim']
+      else:
+        num_features = num_features // 2
+      down = tf.keras.layers.Dense(num_features, **dense_settings)
+      self.l.append(down)
+    self.l = tuple(self.l)
+
+
+  def call(self, x):
+    for layer in self.l:
+      x = layer(x)
+      x = tf.nn.leaky_relu(x)
+      print(x.shape)
+    return x
+
+
+class FunnelUp(tf.keras.Model):
+  """Upsample representations of each token
+  """
+  def __init__(self):
+    super(FunnelUp, self).__init__()
+    self.l = []
+    num_features = CFG['language_model_size']
+    while num_features != CFG['target_up_token_dim']:
+      if num_features // 4 < CFG['target_up_token_dim']:
+        num_features = CFG['target_up_token_dim']
+      else:
+        num_features = num_features // 2
+      up = tf.keras.layers.Dense(num_features * 2, **dense_settings)
+      self.l.insert(0, up)
+    self.l = tuple(self.l)
+
+
+  def call(self, x):
+    for layer in self.l:
+      x = layer(x)
+      x = tf.nn.leaky_relu(x)
+      print(x.shape)
+    return x
+
+
 lr_multiplier_models = {
   LangEncoder: CFG['lang_encoder_lr'],
   LangDecoder: CFG['lang_decoder_lr'],
   BiT: CFG['decoder_lr'],
-  Generator: CFG['generator_lr'],
+  CNNGenerator: CFG['generator_lr'],
+  CPPNGenerator: CFG['generator_lr'],
+  FunnelDown: CFG['funnel_lr'],
+  FunnelUp: CFG['funnel_lr'],
   tf.keras.layers.Dense: CFG['default_lr']
 }
 
 
 # ============================== HELPER FUNCTIONS ==============================
-def perceptual_loss(features, max_pairs=1_000, MULTIPLIER=-1):
+def perceptual_loss(features, max_pairs=1_000, MULTIPLIER=1):
   """Return a negative value, where greater magnitudes describe further distances.
   This is to encourage samples to be perceptually more distant from each other.
   i.e., they are repelled from each other.
   """
   b_s = features.shape[0]
+  # batch size must be at least 2 for this to be effective at all
+  assert b_s >= 2
+
+  # adapted from https://github.com/tensorflow/lucid/blob/master/lucid/optvis/objectives.py
+  flattened = tf.reshape(features, [b_s, -1, features.shape[-1]])
+  grams = tf.matmul(flattened, flattened, transpose_a=True)
+  grams = tf.nn.l2_normalize(flattened, axis=[1,2], epsilon=1e-10)
+
   num_pairs = (b_s * (b_s - 1)) // 2
   pair_idxs = tf.where(tf.ones((b_s, b_s)))
   non_matching_pairs = tf.squeeze(tf.where(pair_idxs[:, 0] < pair_idxs[:, 1]))
@@ -44,21 +106,17 @@ def perceptual_loss(features, max_pairs=1_000, MULTIPLIER=-1):
   use_pair_idxs = tf.random.uniform([num_pairs], minval=0, maxval=num_pairs, dtype=tf.int32)
   pair_idxs = tf.gather(pair_idxs, use_pair_idxs)
 
-  # features = tf.math.reduce_mean(features, [1, 2])
-  feature_pairs = tf.gather(features, pair_idxs)
-  diffs = feature_pairs[:, 0] - feature_pairs[:, 1]
-  diffs = tf.math.reduce_mean(tf.abs(diffs), axis=-1)
-
-  percept_loss = tf.math.reduce_mean(diffs)
-  percept_loss = tf.sqrt(percept_loss)
+  gram_pairs = tf.gather(grams, pair_idxs)
+  diffs = tf.math.multiply(gram_pairs[:, 0], gram_pairs[:, 1])
+  percept_loss = tf.math.reduce_sum(diffs) / num_pairs
   percept_loss = percept_loss * MULTIPLIER
   return percept_loss
 
 
 def vector_distance_loss(rep1, rep2, max_pairs=1_000):
   """Experimental loss score based on trying to match the distance between
-  corresponding pairs of representations, using logistic loss between distances
-  normalized from 0 to 1. No idea how stable this will be!
+  corresponding pairs of representations, using L2 loss between distances
+  normalized from 0 to 1. This is more stable than using logistic loss.
   This use case: match the distances between pairs of images perceptions with
   the distances between pairs of symbol labels.
   Update: this is likely not necessary because graph pretraining actually hasn't
@@ -67,7 +125,9 @@ def vector_distance_loss(rep1, rep2, max_pairs=1_000):
   Still curious!
   """
   n = rep1.shape[0]
-  assert n >= 4
+  # batch size must be at least 2 for this to be effective at all
+  assert n >= 2
+
   num_pairs = (rep1.shape[0] * (rep1.shape[0] - 1)) // 2
   pairs = tf.where(tf.ones((n, n)))
 
@@ -111,6 +171,16 @@ def vector_distance_loss(rep1, rep2, max_pairs=1_000):
   return error
 
 
+# ============================== GET MODELS ==============================
+def get_generator():
+  if CFG['generator_model'] == 'cnn':
+    return CNNGenerator()
+  elif CFG['generator_model'] == 'cppn':
+    return CPPNGenerator()
+  else:
+    raise RuntimeError()
+
+
 # ============================== MODELING ==============================
 def variable_lr_map(model):
   """Map each variable name to learning rate based on submodel
@@ -150,9 +220,9 @@ def train_step(self, x):
 
     # perceptual loss
     if CFG['use_perceptual_loss']:
-      percept_loss = vector_distance_loss(
+      percept_loss = perceptual_loss(
         result['metadata']['percept'],
-        result['metadata']['Z']
+        # result['metadata']['Z']
       )
       losses['percept_loss'] = percept_loss
 
@@ -198,16 +268,8 @@ class LangAutoencoder(tf.keras.Model):
       trainable=False,
       name='current_lr'
     )
-    print(f"AUTOENCODER LATENT DIM: {self.latent_size}")
-    for r in range(CFG['lang_autoencoder_r'] + 1):
-      scale = 2 ** (r)
-      num_features = CFG['language_model_size'] // scale
-      down = tf.keras.layers.Dense(num_features, **dense_settings)
-      up = tf.keras.layers.Dense(num_features, **dense_settings)
-      self.funnel_down.append(down)
-      self.funnel_up.insert(0, up)
-    self.funnel_down = tuple(self.funnel_down)
-    self.funnel_up = tuple(self.funnel_up)
+    self.funnel_down = FunnelDown()
+    self.funnel_up = FunnelUp()
 
 
   def compile(self, optimizer, loss_fn, loss_object , metric_fn, num_replicas, debug=True):
@@ -226,17 +288,11 @@ class LangAutoencoder(tf.keras.Model):
     assert 'attention_mask' in tokens
     x = self.lang_encoder(tokens)
 
-    for down in self.funnel_down:
-      x = down(x)
-      x = tf.nn.leaky_relu(x)
-      print(x.shape)
+    x = self.funnel_down(x)
     
     Z = x
 
-    for up in self.funnel_up:
-      x = up(x)
-      x = tf.nn.leaky_relu(x)
-      print(x.shape)
+    x = self.funnel_up(x)
 
     seq_pred = self.lang_decoder(x)
     return {
@@ -251,11 +307,11 @@ class VisionModel(tf.keras.Model):
   def __init__(self):
     super(VisionModel, self).__init__()
     self._name = 'root'
-    self.generator = Generator()
+    self.generator = get_generator()
     self.decoder = BiT()
     self.perceptor = None
     if CFG['use_perceptual_loss']:
-      self.perceptor = BiT()
+      self.perceptor = BiT(percept=True)
       self.perceptor.trainable = False
     self.symbol_embed = tf.keras.layers.Dense(CFG['vision_model_size'], **dense_settings)
     self.symbol_predict = tf.keras.layers.Dense(CFG['num_symbols'], **dense_settings)
@@ -291,10 +347,12 @@ class VisionModel(tf.keras.Model):
     else:
       aug_imgs = imgs
     Z_pred = self.decoder(aug_imgs)
+    print(f"Z pred: {Z_pred.shape}")
     if CFG['use_perceptual_loss']:
       _, percept = self.perceptor(aug_imgs, perceptual=True)
+      print(f"percept: {percept.shape}")
     else:
-      percept = None
+      percept = 0.
     x_pred = self.symbol_predict(Z_pred)
     return {
       'prediction': x_pred,
@@ -316,11 +374,11 @@ class GestaltModel(tf.keras.Model):
     self.lang_encoder = LangEncoder()
     self.lang_decoder = LangDecoder()
     # VISION
-    self.generator = Generator()
+    self.generator = get_generator()
     self.decoder = BiT()
     self.perceptor = None
     if CFG['use_perceptual_loss']:
-      self.perceptor = BiT()
+      self.perceptor = BiT(percept=True)
       self.perceptor.trainable = False
     self.noisy_channel = get_noisy_channel()
     self.difficulty = tf.Variable(
@@ -333,21 +391,8 @@ class GestaltModel(tf.keras.Model):
       trainable=False,
       name='current_lr'
     )
-    # AUTOENCODER
-    self.funnel_down = []
-    self.funnel_up = []
-    num_features = CFG['language_model_size']
-    while num_features != CFG['target_token_dim']:
-      if num_features // 4 < CFG['target_token_dim']:
-        num_features = CFG['target_token_dim']
-      else:
-        num_features = num_features // 2
-      down = tf.keras.layers.Dense(num_features, **dense_settings)
-      up = tf.keras.layers.Dense(num_features * 2, **dense_settings)
-      self.funnel_down.append(down)
-      self.funnel_up.insert(0, up)
-    self.funnel_down = tuple(self.funnel_down)
-    self.funnel_up = tuple(self.funnel_up)
+    self.funnel_down = FunnelDown()
+    self.funnel_up = FunnelUp()
 
 
   def compile(self, optimizer, loss_fn, loss_object , metric_fn, num_replicas, debug=True):
@@ -361,6 +406,43 @@ class GestaltModel(tf.keras.Model):
     self.global_batch_size = num_replicas * CFG['batch_size']
 
 
+  def custom_save(self, path):
+    self.generator.save(
+      f"{path}/generator/best",
+      include_optimizer=False,
+      save_format='tf',
+    )
+    print("Saved generator")
+    self.decoder.save(
+      f"{path}/decoder/best",
+      include_optimizer=False,
+      save_format='tf',
+    )
+    print("Saved decoder")
+    self.funnel_up.save(
+      f"{path}/funnel-up/best",
+      include_optimizer=False,
+      save_format='tf',
+    )
+    self.funnel_down.save(
+      f"{path}/funnel-down/best",
+      include_optimizer=False,
+      save_format='tf',
+    )
+    print("Saved funnel up and funnel down")
+    self.lang_encoder.save(
+      f"{path}/lang-encoder/best",
+      include_optimizer=False,
+      save_format='tf',
+    )
+    self.lang_decoder.save(
+      f"{path}/lang-decoder/best",
+      include_optimizer=False,
+      save_format='tf',
+    )
+    print("Saved lang encoder and decoder")
+
+
   def call(self, tokens):
     assert 'input_ids' in tokens
     assert 'attention_mask' in tokens
@@ -368,11 +450,7 @@ class GestaltModel(tf.keras.Model):
     # LANG
     x = self.lang_encoder(tokens)
 
-    # DOWN
-    for down in self.funnel_down:
-      x = down(x)
-      x = tf.nn.leaky_relu(x)
-      print(x.shape)
+    x = self.funnel_down(x)
     
     # VISION
     Z = tf.reshape(x, [CFG['batch_size'], -1])
@@ -382,19 +460,21 @@ class GestaltModel(tf.keras.Model):
     else:
       aug_imgs = imgs
     Z_pred = self.decoder(aug_imgs)
+    # now: unfortunately some potential data loss. hey, it happens
+    if Z_pred.shape[1] < CFG['vision_model_size']:
+      Z_pred = Z_pred[:, :CFG['vision_model_size']]
+    print(f"Z pred: {Z_pred.shape}")
     if CFG['use_perceptual_loss']:
       _, percept = self.perceptor(aug_imgs, perceptual=True)
+      print(f"percept: {percept.shape}")
     else:
-      percept = None
-    # now: unfortunately some potential data loss. hey, it happens
-    Z_pred = Z_pred[:, :CFG['vision_model_size']]
+      percept = 0.
 
     # UP
     x_out = tf.reshape(Z_pred, [CFG['batch_size'], CFG['max_len'], -1])
-    for up in self.funnel_up:
-      x_out = up(x_out)
-      x_out = tf.nn.leaky_relu(x_out)
-      print(x_out.shape)
+    print(x_out.shape)
+    
+    x_out = self.funnel_up(x_out)
 
     # LANG
     seq_pred = self.lang_decoder(x_out)
@@ -539,10 +619,8 @@ class CheckpointSaver(tf.keras.callbacks.Callback):
       if capped_acc > self.best_acc:
         self.best_acc = capped_acc
         print(f"\nSaving new weights with best accuracy of {capped_acc}")
-        self.model.save(
-          f"{CFG['path_prefix']}checkpoints/{CFG['run_name']}/best",
-          include_optimizer=False,
-          save_format='tf',
+        self.model.custom_save(
+          f"{CFG['path_prefix']}checkpoints/{CFG['run_name']}",
         )
         self.ckpt_counter = CFG['ckpt_every_n_epochs']
 

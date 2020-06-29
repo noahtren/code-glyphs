@@ -19,7 +19,7 @@ code_data_dir = file_dir
 
 
 def read_code_dataset(subdir='train', read_all=True):
-  train_data_dir = os.path.join(code_data_dir, subdir)
+  train_data_dir = os.path.join(code_data_dir, 'code_data', subdir)
   pattern = r'(\"\"\"(.|\n)*\"\"\"\s*)'
   data = []
   for i, train_data_file in tqdm(enumerate(os.listdir(train_data_dir))):
@@ -33,15 +33,14 @@ def read_code_dataset(subdir='train', read_all=True):
           docstring = re.search(pattern, code_str)
           if docstring is not None:
             docstring = docstring.groups()[0]
-            print(docstring)
-            # if len(docstring) != 1:
-            #   code.interact(local={**locals(), **globals()})
+            # print(docstring)
             code_str = code_str.replace(docstring, "")
           if len(tokenizer.encode(code_str)) <= CFG['max_len']:
             data.append(code_str)
   with open(f"data_cache_{CFG['max_len']}.json", "w+") as f:
     f.write(json.dumps(data))
   print(f"Got {len(data)} data samples")
+  code.interact(local={**locals(), **globals()})
   return data
 
 
@@ -125,7 +124,7 @@ def get_dataset(num_replicas:int=1, tokenize_before=True):
 
 
 if __name__ == "__main__":
-  # read_code_dataset()
+  read_code_dataset()
 
-  ds, val_ds = get_dataset()
-  for val in ds.take(1): pass
+  # ds, val_ds = get_dataset()
+  # for val in ds.take(1): pass

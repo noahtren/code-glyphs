@@ -1,11 +1,11 @@
 # LOGGING AND LOGISTICS
 local_prefix: ./
-run_name: prod_percept_nodist_test_3levels
+run_name: gestalt_cppn_percept_8
 use_gcs: true
 gcs_prefix: gs://code-glyphs/
 s3_bucket: gestalt-graph
 gcs_bucket: code-glyphs
-img_summaries_per_epoch: 4
+img_summaries_per_epoch: 6
 img_summaries_every_n_epochs: 5
 
 # MODELS
@@ -18,12 +18,21 @@ lang_autoencoder_r: 4 # 48x48
 language_model_size: 768
 
 # -- VISION
+generator_model: cppn
+generator_models: [cppn, cnn]
 vision_model_size: 2048
-# -- -- CPPN
-img_dim: 64
-generator_levels: 3
+vision_backbone: BiT-M-R50x1
+generator_downsample_ratio: 2
+
+# -- -- Generator
+generator_model_size: 256
+generator_input_size: 2048
+img_dim: 128
+cppn_conv: true
+cppn_blocks: 5
+generator_levels: 5
 res_blocks_per_level: 5
-c_out: 8
+c_out: 3
 composite_colors:
   - "ff0000" # primary
   - "00ff00"
@@ -35,7 +44,7 @@ composite_colors:
   - "000000"
 
 # DATA
-max_len: 48
+max_len: 128
 num_symbols: 64
 
 # alternate loss scores
@@ -43,19 +52,20 @@ use_perceptual_loss: true
 
 # TRAINING
 epochs: 500
-batch_size: 24
+batch_size: 16
 lang_encoder_lr: 5.e-7 # BERT: peak value of 1-e4 with b=256
 lang_decoder_lr: 5.e-7
 generator_lr: 5.e-5
 decoder_lr: 5.e-5
 default_lr: 5.e-5
+funnel_lr: 5.e-5
 label_smoothing: 0.0001
 use_aug: true
-ckpt_every_n_epochs: 100
+ckpt_every_n_epochs: 25
 
 # learning rate scheduling
 use_warmup: true
-warmup_steps: 1000
+warmup_steps: 100
 use_decay: true
 decay_rate: 0.975
-decay_steps: 3000
+decay_steps: 1000

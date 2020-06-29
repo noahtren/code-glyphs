@@ -77,7 +77,7 @@ def gcs_folder_exists(file_name):
 if __name__ == "__main__":
   code_only = True
   if code_only:
-    exts = ['.py', '.json', '.yaml']
+    exts = ['.py', '.yaml']
   else:
     exts = ['.py', '.json', '.yaml', '.h5']
 

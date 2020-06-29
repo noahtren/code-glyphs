@@ -1,6 +1,7 @@
 .vscode/
 __pycache__/
 code_data/
+model_cache/
 logs/
 *.json
 *.h5

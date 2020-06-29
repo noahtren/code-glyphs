@@ -67,8 +67,9 @@ def batch_encode(raw_texts:list):
     raw_texts,
     max_length=CFG['max_len'],
     pad_to_max_length=True,
-    return_attention_masks=True,
+    return_attention_mask=True,
     return_tensors='tf',
+    truncation=True
   )
   if flatten_output:
     return token_batch['input_ids'], token_batch['attention_mask']

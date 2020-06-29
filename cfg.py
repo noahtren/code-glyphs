@@ -2,7 +2,7 @@ import os
 import yaml
 
 file_dir = os.path.dirname(os.path.abspath(__file__))
-
+os.environ['TOKENIZERS_PARALLELISM'] = 'true'
 
 def read_config():
   cfg = yaml.safe_load(open(
@@ -13,12 +13,21 @@ def read_config():
 
 def validate_cfg(cfg):
   assert cfg['full_model'] in cfg['full_models'], f"Model type {cfg['full_model']} not understood"
+  if 'use_perceptual_loss' not in cfg:
+    cfg['use_perceptual_loss'] = False
+  if 'vision_backbone' not in cfg:
+    cfg['vision_backbone'] = 'BiT-M-R50x1'
+  if 'generator_downsample_ratio' not in cfg:
+    cfg['generator_downsample_ratio'] = 2
+  if 'generator_model' not in cfg:
+    cfg['generator_model'] = 'cnn'
+  assert cfg['generator_model'] in cfg['generator_models']
   if cfg['use_perceptual_loss']:
     assert cfg['full_model'] in ['vision', 'gestalt'], "Can't use perceptual loss without vision components"
 
 
 def populate_cfg(cfg):
-  cfg['ideal_vision_model_size'] = cfg['vision_model_size']
+  cfg['ideal_generator_model_size'] = cfg['generator_model_size']
   if cfg['use_gcs']:
     gcs_credentials_path = os.path.join(file_dir, "gestalt-graph-59b01bb414f3.json")
     os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = gcs_credentials_path
@@ -27,10 +36,11 @@ def populate_cfg(cfg):
     cfg['path_prefix'] = cfg['local_prefix']
   # make some changes to parameters if using gestalt model
   if cfg['full_model'] == 'gestalt':
-    target_token_dim = ((cfg['vision_model_size'] // cfg['max_len']) // 8) * 8
-    new_vision_model_size = target_token_dim * cfg['max_len']
-    cfg['target_token_dim'] = target_token_dim
-    cfg['vision_model_size'] = new_vision_model_size
+    target_down_token_dim = ((cfg['generator_input_size'] // cfg['max_len']) // 8) * 8
+    target_up_token_dim = ((cfg['vision_model_size'] // cfg['max_len']) // 8) * 8
+    cfg['target_down_token_dim'] = target_down_token_dim
+    cfg['target_up_token_dim'] = target_up_token_dim
+    cfg['generator_input_size'] = target_down_token_dim * cfg['max_len']
   # TPU
   cfg['TPU'] = False
   if 'IS_TPU' in os.environ:
@@ -56,7 +66,7 @@ def save_config(cfg):
       f.write(cfg_str)
 
 
-def get_config():
+def get_config(save=True):
   global CFG
   try:
     CFG
@@ -66,7 +76,8 @@ def get_config():
     validate_cfg(cfg)
     cfg = populate_cfg(cfg)
     set_config(cfg)
-    save_config(cfg)
+    if save:
+      save_config(cfg)
     return CFG
 
 
