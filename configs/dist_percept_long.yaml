@@ -1,7 +1,6 @@
 # LOGGING AND LOGISTICS
 local_prefix: ./
-run_name: dist_percept_long_contd_4
-load_name: dist_percept_long_contd_3
+run_name: dist_percept_long
 use_gcs: true
 gcs_prefix: gs://code-glyphs/
 s3_bucket: gestalt-graph

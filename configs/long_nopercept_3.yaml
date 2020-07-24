@@ -1,7 +1,6 @@
 # LOGGING AND LOGISTICS
 local_prefix: ./
-run_name: dist_percept_long_contd_4
-load_name: dist_percept_long_contd_3
+run_name: long_nopercept_3
 use_gcs: true
 gcs_prefix: gs://code-glyphs/
 s3_bucket: gestalt-graph
@@ -28,11 +27,11 @@ generator_downsample_ratio: 2
 # -- -- Generator
 generator_model_size: 2048
 generator_input_size: 2048
-img_dim: 128
+img_dim: 96
 cppn_conv: true
 cppn_blocks: 5
 generator_levels: 5
-res_blocks_per_level: 5
+res_blocks_per_level: 3
 c_out: 3
 composite_colors:
   - "ff0000" # primary
@@ -45,22 +44,21 @@ composite_colors:
   - "000000"
 
 # DATA
-max_len: 64
+max_len: 128
 num_symbols: 64
 
 # alternate loss scores
-use_perceptual_loss: true
-perceptual_loss_style: 'distance' # or 'normal'
+use_perceptual_loss: false
 
 # TRAINING
 epochs: 500
-batch_size: 32
-lang_encoder_lr: 4.e-7 # BERT: peak value of 1-e4 with b=256
-lang_decoder_lr: 4.e-7
-generator_lr: 4.e-5
-decoder_lr: 4.e-5
-default_lr: 4.e-5
-funnel_lr: 4.e-5
+batch_size: 80
+lang_encoder_lr: 1.e-6 # BERT: peak value of 1-e4 with b=256
+lang_decoder_lr: 1.e-6
+generator_lr: 1.e-4
+decoder_lr: 1.e-4
+default_lr: 1.e-4
+funnel_lr: 1.e-4
 label_smoothing: 0.0001
 use_aug: true
 ckpt_every_n_epochs: 10

@@ -1,7 +1,7 @@
 # LOGGING AND LOGISTICS
 local_prefix: ./
-run_name: dist_percept_long_contd_4
-load_name: dist_percept_long_contd_3
+run_name: local_vision_test
+# load_name: ''
 use_gcs: true
 gcs_prefix: gs://code-glyphs/
 s3_bucket: gestalt-graph
@@ -10,9 +10,9 @@ img_summaries_per_epoch: 6
 img_summaries_every_n_epochs: 5
 
 # MODELS
-full_model: gestalt
+full_model: vision
 full_models: [language, vision, gestalt]
-eager_mode: false
+eager_mode: true
 
 # -- LANGUAGE
 lang_autoencoder_r: 4 # 48x48
@@ -26,13 +26,13 @@ vision_backbone: BiT-M-R50x1
 generator_downsample_ratio: 2
 
 # -- -- Generator
-generator_model_size: 2048
-generator_input_size: 2048
-img_dim: 128
+generator_model_size: 512
+generator_input_size: 512
+img_dim: 64
 cppn_conv: true
 cppn_blocks: 5
 generator_levels: 5
-res_blocks_per_level: 5
+res_blocks_per_level: 3
 c_out: 3
 composite_colors:
   - "ff0000" # primary
@@ -45,8 +45,8 @@ composite_colors:
   - "000000"
 
 # DATA
-max_len: 64
-num_symbols: 64
+max_len: 128
+num_symbols: 8
 
 # alternate loss scores
 use_perceptual_loss: true
@@ -54,13 +54,13 @@ perceptual_loss_style: 'distance' # or 'normal'
 
 # TRAINING
 epochs: 500
-batch_size: 32
-lang_encoder_lr: 4.e-7 # BERT: peak value of 1-e4 with b=256
-lang_decoder_lr: 4.e-7
-generator_lr: 4.e-5
-decoder_lr: 4.e-5
-default_lr: 4.e-5
-funnel_lr: 4.e-5
+batch_size: 4
+lang_encoder_lr: 8.e-7 # BERT: peak value of 1-e4 with b=256
+lang_decoder_lr: 8.e-7
+generator_lr: 8.e-5
+decoder_lr: 8.e-5
+default_lr: 8.e-5
+funnel_lr: 8.e-5
 label_smoothing: 0.0001
 use_aug: true
 ckpt_every_n_epochs: 10

@@ -8,13 +8,15 @@ import matplotlib.pyplot as plt
 from cfg import get_config; CFG = get_config()
 from data import get_dataset
 from models import get_model, get_optim, get_loss_fn, get_metric_fn, \
-  DifficultyManager, ImageSnapshotManager, LearningRateManager, CheckpointSaver
+  DifficultyManager, ImageSnapshotManager, LearningRateManager, CheckpointSaver, \
+  ClearHistory
 
 
 def main():
   strategy = None
   if CFG['TPU']:
-    TPU_WORKER = 'grpc://' + os.environ['COLAB_TPU_ADDR']
+    # TPU_WORKER = 'grpc://' + os.environ['COLAB_TPU_ADDR']
+    TPU_WORKER = ''
     resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu=TPU_WORKER)
     tf.config.experimental_connect_to_cluster(resolver)
     tf.tpu.experimental.initialize_tpu_system(resolver)
@@ -40,7 +42,8 @@ def main():
     diffc = DifficultyManager()
     lrmc = LearningRateManager()
     ckptc = CheckpointSaver()
-    callbacks = [tbc, snapc, diffc, lrmc, ckptc]
+    chist = ClearHistory()
+    callbacks = [tbc, snapc, diffc, lrmc, ckptc, chist]
 
     # build and compile model
     # (have to run inference first to populate variables)
@@ -60,6 +63,10 @@ def main():
                   metric_fn=metric_fn,
                   num_replicas=num_replicas)
     model.run_eagerly = CFG['eager_mode']
+    if 'load_name' in CFG:
+      model.custom_load(
+        f"{CFG['path_prefix']}checkpoints/{CFG['load_name']}"
+      )
 
     # train loop
     model.fit(x=ds,

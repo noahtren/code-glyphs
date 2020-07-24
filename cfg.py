@@ -15,6 +15,10 @@ def validate_cfg(cfg):
   assert cfg['full_model'] in cfg['full_models'], f"Model type {cfg['full_model']} not understood"
   if 'use_perceptual_loss' not in cfg:
     cfg['use_perceptual_loss'] = False
+  if 'perceptual_loss_style' not in cfg:
+    cfg['perceptual_loss_style'] = 'normal'
+  if 'percept_mult' not in cfg:
+    cfg['percept_mult'] = 1.0
   if 'vision_backbone' not in cfg:
     cfg['vision_backbone'] = 'BiT-M-R50x1'
   if 'generator_downsample_ratio' not in cfg:

@@ -81,15 +81,15 @@ class ResidualBlock(tf.keras.layers.Layer):
     start_x = x
 
     x = self.batch_norms[0](x)
-    x = tf.nn.leaky_relu(x)
+    x = tf.nn.swish(x)
     x = self.first_conv(x)
 
     x = self.batch_norms[1](x)
-    x = tf.nn.leaky_relu(x)
+    x = tf.nn.swish(x)
     x = self.second_conv(x)
 
     x = self.batch_norms[2](x)
-    x = tf.nn.leaky_relu(x)
+    x = tf.nn.swish(x)
     x = self.third_conv(x)
 
     if do_skip:
@@ -155,8 +155,7 @@ class CNNGenerator(tf.keras.Model):
       kernel_size=1,
       strides=1,
       padding='same',
-      **cnn_settings,
-      **activity_reg
+      **{**cnn_settings, **activity_reg},
     )
     self.img_dim = CFG['img_dim']
     self.spatial_scale = 1 / CFG['img_dim']
@@ -229,13 +228,13 @@ class CPPNBlock(tf.keras.Model):
   def call(self, x, do_skip=True):
     start_x = x
 
-    x = tf.nn.leaky_relu(x)
+    x = tf.nn.swish(x)
     x = self.layer_1(x)
 
-    x = tf.nn.leaky_relu(x)
+    x = tf.nn.swish(x)
     x = self.layer_2(x)
 
-    x = tf.nn.leaky_relu(x)
+    x = tf.nn.swish(x)
     x = self.layer_3(x)
 
     if do_skip:
@@ -264,7 +263,10 @@ def fourier_mapping(coords, B):
 class CPPNGenerator(tf.keras.Model):
   def __init__(self):
     super(CPPNGenerator, self).__init__()
-    self.Z_embeds = [tf.keras.layers.Dense(CFG['generator_model_size'], **dense_settings) for _ in range(6)]
+    self.Z_embeds = [[tf.keras.layers.Dense(
+      CFG['generator_model_size'],
+      **dense_settings) for _ in range(6)]
+      for _ in range(CFG['cppn_blocks'])]
     BlockObject = ResidualBlock if CFG['cppn_conv'] else CPPNBlock
     self.blocks = [CPPNBlock(CFG['generator_model_size']) for _ in range(CFG['cppn_blocks'])]
     self.mlp_out = tf.keras.layers.Dense(3, **activity_reg, **dense_settings)
@@ -275,25 +277,32 @@ class CPPNGenerator(tf.keras.Model):
   def call(self, Z):
     batch_size = Z.shape[0]
     
-    for i, embed in enumerate(self.Z_embeds):
-      start_Z = Z
-      Z = embed(Z)
-      Z = tf.nn.swish(Z)
-      if i != 0: Z = Z + start_Z
-    Z = tf.tile(Z[:, tf.newaxis, tf.newaxis], [1, CFG['img_dim'], CFG['img_dim'], 1])
-
     coords = generate_scaled_coordinate_hints(batch_size, CFG['img_dim'])
     features1 = fourier_mapping(coords, B=self.B1)
     features2 = fourier_mapping(coords, B=self.B2)
     features = tf.concat([features1, features2], axis=-1)
 
-    for i, block in enumerate(self.blocks):
+    # TODO: apply fourier features to CNN-based generator, which works better
+
+    for i, (block, Z_embeds) in enumerate(zip(self.blocks, self.Z_embeds)):
       if i == 0:
-        x = block(features, do_skip=False) + Z
+        x = block(features, do_skip=False)
       else:
         x = block(x)
-      print(f"CPPN Block {i}: {x.shape}")
+      # get Z per block
+      _Z = Z
+      for j, embed in enumerate(Z_embeds):
+        start_Z = _Z
+        _Z = embed(_Z)
+        # activation for all but last
+        if j != len(Z_embeds) - 1: _Z = tf.nn.swish(_Z)
+        # residual connection for all but first
+        if j != 0: _Z = _Z + start_Z
+      _Z = tf.tile(_Z[:, tf.newaxis, tf.newaxis], [1, CFG['img_dim'], CFG['img_dim'], 1])
+      # add Z
+      x = x + _Z
       x = tf.nn.swish(x)
+      print(f"CPPN Block {i}: {x.shape}")
     x = self.mlp_out(x)
     x = tf.nn.sigmoid(x)
     print(f"Img out: {x.shape}")

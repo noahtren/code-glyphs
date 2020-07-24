@@ -1,7 +1,6 @@
 # LOGGING AND LOGISTICS
 local_prefix: ./
-run_name: dist_percept_long_contd_4
-load_name: dist_percept_long_contd_3
+run_name: dist_percept_long_mult
 use_gcs: true
 gcs_prefix: gs://code-glyphs/
 s3_bucket: gestalt-graph
@@ -32,7 +31,7 @@ img_dim: 128
 cppn_conv: true
 cppn_blocks: 5
 generator_levels: 5
-res_blocks_per_level: 5
+res_blocks_per_level: 3
 c_out: 3
 composite_colors:
   - "ff0000" # primary
@@ -51,10 +50,11 @@ num_symbols: 64
 # alternate loss scores
 use_perceptual_loss: true
 perceptual_loss_style: 'distance' # or 'normal'
+percept_mult: 10.0
 
 # TRAINING
 epochs: 500
-batch_size: 32
+batch_size: 64
 lang_encoder_lr: 4.e-7 # BERT: peak value of 1-e4 with b=256
 lang_decoder_lr: 4.e-7
 generator_lr: 4.e-5

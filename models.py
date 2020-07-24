@@ -3,6 +3,7 @@
 
 import code
 from types import MethodType
+import gc
 
 import tensorflow as tf
 
@@ -40,7 +41,7 @@ class FunnelDown(tf.keras.Model):
   def call(self, x):
     for layer in self.l:
       x = layer(x)
-      x = tf.nn.leaky_relu(x)
+      x = tf.nn.swish(x)
       print(x.shape)
     return x
 
@@ -65,7 +66,7 @@ class FunnelUp(tf.keras.Model):
   def call(self, x):
     for layer in self.l:
       x = layer(x)
-      x = tf.nn.leaky_relu(x)
+      x = tf.nn.swish(x)
       print(x.shape)
     return x
 
@@ -82,21 +83,19 @@ lr_multiplier_models = {
 }
 
 
-# ============================== HELPER FUNCTIONS ==============================
-def perceptual_loss(features, max_pairs=1_000, MULTIPLIER=1):
-  """Return a negative value, where greater magnitudes describe further distances.
-  This is to encourage samples to be perceptually more distant from each other.
-  i.e., they are repelled from each other.
+def get_pair_alignment(features, max_pairs=1_000):
+  """For each unique pair of features (along the batch axis), find the alignment
+  between activations and normalize
   """
   b_s = features.shape[0]
-  # batch size must be at least 2 for this to be effective at all
   assert b_s >= 2
 
-  # adapted from https://github.com/tensorflow/lucid/blob/master/lucid/optvis/objectives.py
-  flattened = tf.reshape(features, [b_s, -1, features.shape[-1]])
-  grams = tf.matmul(flattened, flattened, transpose_a=True)
-  grams = tf.nn.l2_normalize(flattened, axis=[1,2], epsilon=1e-10)
+  # flattened = tf.reshape(features, [b_s, -1, features.shape[-1]])
+  grams = tf.nn.l2_normalize(features, axis=tf.range(1, tf.rank(features)), epsilon=1e-10)
 
+  # note that sum(grams[0] * grams[0]) == 1
+
+  # create pairs matrix
   num_pairs = (b_s * (b_s - 1)) // 2
   pair_idxs = tf.where(tf.ones((b_s, b_s)))
   non_matching_pairs = tf.squeeze(tf.where(pair_idxs[:, 0] < pair_idxs[:, 1]))
@@ -106,49 +105,36 @@ def perceptual_loss(features, max_pairs=1_000, MULTIPLIER=1):
   use_pair_idxs = tf.random.uniform([num_pairs], minval=0, maxval=num_pairs, dtype=tf.int32)
   pair_idxs = tf.gather(pair_idxs, use_pair_idxs)
 
+  # put features in pairs matrix and calculate alignment (will be from 0 to 1)
   gram_pairs = tf.gather(grams, pair_idxs)
-  diffs = tf.math.multiply(gram_pairs[:, 0], gram_pairs[:, 1])
-  percept_loss = tf.math.reduce_sum(diffs) / num_pairs
-  percept_loss = percept_loss * MULTIPLIER
+  alignment = tf.math.multiply(gram_pairs[:, 0], gram_pairs[:, 1])
+  per_pair_alignment = tf.math.reduce_sum(alignment, axis=tf.range(1, tf.rank(alignment)))
+  return per_pair_alignment
+
+
+# ============================== HELPER FUNCTIONS ==============================
+def perceptual_loss(features, max_pairs=1_000, MULTIPLIER=1):
+  """Return the alignment between pairs of features and return it as a loss
+  scalar. This encourages the alignment between features to be less.
+  """
+  per_pair_alignment = get_pair_alignment(features, max_pairs)
+  average_alignment = tf.math.reduce_mean(per_pair_alignment)
+  percept_loss = average_alignment * MULTIPLIER
   return percept_loss
 
 
 def vector_distance_loss(rep1, rep2, max_pairs=1_000):
-  """Experimental loss score based on trying to match the distance between
-  corresponding pairs of representations, using L2 loss between distances
-  normalized from 0 to 1. This is more stable than using logistic loss.
-  This use case: match the distances between pairs of images perceptions with
-  the distances between pairs of symbol labels.
-  Update: this is likely not necessary because graph pretraining actually hasn't
-  shown to provide a major qualitative improvement, so there is nothing
-  particularly special about the graph embeddings vs. visual latent spaces.
-  Still curious!
+  """Find the alignment between all pairs for two different stages of a
+  representation, and encourage them to map more closely to each other.
+  The idea here is that the representations from the language model should have
+  similar *relative* characteristics to the representations from the image generator.
   """
   n = rep1.shape[0]
   # batch size must be at least 2 for this to be effective at all
   assert n >= 2
 
-  num_pairs = (rep1.shape[0] * (rep1.shape[0] - 1)) // 2
-  pairs = tf.where(tf.ones((n, n)))
-
-  # get diagonal of adjacency matrix indices
-  unique_pairs = tf.squeeze(tf.where(pairs[:, 0] < pairs[:, 1]))
-  pairs = tf.gather(pairs, unique_pairs)
-  num_pairs = min([num_pairs, max_pairs])
-  use_pair_idxs = tf.random.uniform([num_pairs], minval=0, maxval=num_pairs, dtype=tf.int32)
-  pairs = tf.gather(pairs, use_pair_idxs)
-  
-  # DISTANCES 1
-  pairs1 = tf.gather(rep1, pairs)
-  diffs1 = tf.abs(pairs1[:, 0] - pairs1[:, 1])
-  # get average feature distance
-  diffs1 = tf.math.reduce_mean(diffs1, axis=tf.range(tf.rank(diffs1) - 1) + 1)
-
-  # DISTANCES 2
-  pairs2 = tf.gather(rep2, pairs)
-  diffs2 = tf.abs(pairs2[:, 0] - pairs2[:, 1])
-  # get average feature distance
-  diffs2 = tf.math.reduce_mean(diffs2, axis=tf.range(tf.rank(diffs2) - 1) + 1)
+  align_1 = get_pair_alignment(rep1, max_pairs)
+  align_2 = get_pair_alignment(rep2, max_pairs)
 
   # NORMALIZE DISTANCES
   def zero_one_normalize(tensor, epsilon=1e-7):
@@ -157,17 +143,15 @@ def vector_distance_loss(rep1, rep2, max_pairs=1_000):
     tensor = tensor / tf.math.reduce_max(tensor)
     return tensor
 
-  diffs1 = zero_one_normalize(diffs1)
-  diffs2 = zero_one_normalize(diffs2)
+  align_1 = zero_one_normalize(align_1)
+  align_2 = zero_one_normalize(align_2)
   
-  # FIND THE DISTANCE BETWEEN DISTANCES (haha)
-  diffs1 = diffs1[:, tf.newaxis]
-  diffs2 = diffs2[:, tf.newaxis]
-  error = tf.keras.losses.mean_squared_error(diffs1, diffs2)
-  # error = tf.keras.losses.binary_crossentropy(diffs1, diffs2)
+  # Encourage alignment between alignments (haha)
+  # this is done by returning the distance between alignments as a loss scalar
+  align_1 = align_1[:, tf.newaxis]
+  align_2 = align_2[:, tf.newaxis]
+  error = tf.keras.losses.mean_squared_error(align_1, align_2)
   error = tf.math.reduce_mean(error)
-  # this is positive because we want points to be similarly distance
-  # regardless of the representation medium
   return error
 
 
@@ -203,7 +187,7 @@ def variable_lr_map(model):
     print("Problem: there are some unassigned values in the learning rate multiplier.")
     code.interact(local={**locals(), **globals()})
   return name_lr_map
-  
+
 
 def train_step(self, x):
   """Train step that works for all models
@@ -220,11 +204,18 @@ def train_step(self, x):
 
     # perceptual loss
     if CFG['use_perceptual_loss']:
-      percept_loss = perceptual_loss(
-        result['metadata']['percept'],
-        # result['metadata']['Z']
-      )
-      losses['percept_loss'] = percept_loss
+      if CFG['perceptual_loss_style'] == 'normal':
+        percept_loss = perceptual_loss(
+          result['metadata']['percept'],
+        )
+      else:
+        percept = result['metadata']['percept']
+        percept = tf.math.reduce_mean(percept, axis=tf.range(1, tf.rank(percept) - 1))
+        percept_loss = vector_distance_loss(
+          percept,
+          result['metadata']['Z']
+        )
+      losses['percept_loss'] = percept_loss * CFG['percept_mult']
 
     # sum all losses
     loss_sum = 0.
@@ -240,7 +231,13 @@ def train_step(self, x):
 
   if hasattr(self, 'difficulty'): metrics['difficulty'] = self.difficulty
 
-  return {**losses, **metrics, **result['metadata'], 'current_lr': self.current_lr}
+  return {
+    **losses,
+    **metrics,
+    'input_ids': x['input_ids'],
+    'attention_mask': x['attention_mask'],
+    'current_lr': self.current_lr
+  }
 
 
 def test_step(self, x):
@@ -339,6 +336,21 @@ class VisionModel(tf.keras.Model):
     self.global_batch_size = num_replicas * CFG['batch_size']
 
 
+  def custom_save(self, path):
+    self.generator.save(
+      f"{path}/generator/best",
+      include_optimizer=False,
+      save_format='tf',
+    )
+    print("Saved generator")
+    self.decoder.save(
+      f"{path}/decoder/best",
+      include_optimizer=False,
+      save_format='tf',
+    )
+    print("Saved decoder")
+
+
   def call(self, x):
     Z = self.symbol_embed(x)
     imgs = self.generator(Z)
@@ -406,39 +418,76 @@ class GestaltModel(tf.keras.Model):
     self.global_batch_size = num_replicas * CFG['batch_size']
 
 
-  def custom_save(self, path):
-    self.generator.save(
+  def custom_load(self, path):
+    self.generator.load_weights(
       f"{path}/generator/best",
-      include_optimizer=False,
-      save_format='tf',
+      # include_optimizer=False,
+      # save_format='tf',
+    )
+    print("Loaded generator")
+    self.decoder.load_weights(
+      f"{path}/decoder/best",
+      # include_optimizer=False,
+      # save_format='tf',
+    )
+    print("Loaded decoder")
+    self.funnel_up.load_weights(
+      f"{path}/funnel-up/best",
+      # include_optimizer=False,
+      # save_format='tf',
+    )
+    self.funnel_down.load_weights(
+      f"{path}/funnel-down/best",
+      # include_optimizer=False,
+      # save_format='tf',
+    )
+    print("Loaded funnel up and funnel down")
+    self.lang_encoder.load_weights(
+      f"{path}/lang-encoder/best",
+      # include_optimizer=False,
+      # save_format='tf',
+    )
+    self.lang_decoder.load_weights(
+      f"{path}/lang-decoder/best",
+      # include_optimizer=False,
+      # save_format='tf',
+    )
+    print("Loaded lang encoder and decoder")
+
+
+  def custom_save(self, path):
+    self.generator.save_weights(
+      f"{path}/generator/best",
+      # include_optimizer=False,
+      # save_format='tf',
     )
     print("Saved generator")
-    self.decoder.save(
+    self.decoder.save_weights(
       f"{path}/decoder/best",
-      include_optimizer=False,
-      save_format='tf',
+      # include_optimizer=False,
+      # save_format='tf',
     )
     print("Saved decoder")
-    self.funnel_up.save(
+    self.funnel_up.save_weights(
       f"{path}/funnel-up/best",
-      include_optimizer=False,
-      save_format='tf',
+      # include_optimizer=False,
+      # save_format='tf',
     )
-    self.funnel_down.save(
+    self.funnel_down.save_weights(
       f"{path}/funnel-down/best",
-      include_optimizer=False,
-      save_format='tf',
+      # include_optimizer=False,
+      # save_format='tf',
     )
     print("Saved funnel up and funnel down")
-    self.lang_encoder.save(
+    self.lang_encoder.save_weights(
       f"{path}/lang-encoder/best",
-      include_optimizer=False,
-      save_format='tf',
+      # include_optimizer=False,
+      # save_format='tf',
     )
-    self.lang_decoder.save(
+    self.lang_decoder.save_weights(
       f"{path}/lang-decoder/best",
-      include_optimizer=False,
-      save_format='tf',
+      # include_optimizer=False,
+      # save_format='tf',
     )
     print("Saved lang encoder and decoder")
 
@@ -567,12 +616,19 @@ class ImageSnapshotManager(tf.keras.callbacks.Callback):
   def __init__(self, log_dir):
     super(ImageSnapshotManager, self).__init__()
     self.writer = tf.summary.create_file_writer(log_dir)
+    self.make_snapshot = False
+    self.step = 0
 
 
-  def on_epoch_end(self, epoch, logs):
-    if epoch % CFG['img_summaries_every_n_epochs'] == 0:
-      imgs = logs['imgs']
-      aug_imgs = logs['aug_imgs']
+  def on_train_batch_end(self, batch, logs):
+    if self.make_snapshot:
+      x = {
+        'input_ids': logs['input_ids'],
+        'attention_mask': logs['attention_mask'],
+      }
+      result = self.model(x)
+      imgs = result['metadata']['imgs']
+      aug_imgs = result['metadata']['aug_imgs']
       rand_idx = tf.random.uniform([CFG['img_summaries_per_epoch']], 0, CFG['batch_size'] -1, dtype=tf.int32)
       # gather random images
       imgs = tf.gather(imgs, rand_idx)
@@ -583,7 +639,14 @@ class ImageSnapshotManager(tf.keras.callbacks.Callback):
       img = tf.concat([imgs, aug_imgs], axis=0)[tf.newaxis]
       # upload single snapshot collage
       with self.writer.as_default():
-        tf.summary.image('snapshot', img, step=epoch)
+        tf.summary.image('snapshot', img, step=self.step)
+        self.step += CFG['img_summaries_every_n_epochs']
+      self.make_snapshot = False
+
+
+  def on_epoch_end(self, epoch, logs):
+    if epoch % CFG['img_summaries_every_n_epochs'] == 0:
+      self.make_snapshot = True
 
 
 class LearningRateManager(tf.keras.callbacks.Callback):
@@ -606,12 +669,14 @@ class LearningRateManager(tf.keras.callbacks.Callback):
     self.model.optimizer.lr = current_lr
 
 
+
 class CheckpointSaver(tf.keras.callbacks.Callback):
   def __init__(self):
     self.best_acc = 0.
     self.ckpt_counter = CFG['ckpt_every_n_epochs']
   
   def on_epoch_end(self, epoch, logs):
+    # SAVE CHECKPOINT
     if self.ckpt_counter > 0:
       self.ckpt_counter -= 1
     else:
@@ -622,7 +687,26 @@ class CheckpointSaver(tf.keras.callbacks.Callback):
         self.model.custom_save(
           f"{CFG['path_prefix']}checkpoints/{CFG['run_name']}",
         )
+        gc.collect()
         self.ckpt_counter = CFG['ckpt_every_n_epochs']
+
+
+class ClearHistory(tf.keras.callbacks.Callback):
+  """History contains imgs, aug_imgs, and percept,
+  each of ~50,000 values per image in a batch (128x128x3)
+  For a batch size of 32, this is 1.6 million floating
+  point values, or 4.8 million for each of the parameters.
+  This adds a ~14MB toll to memory each epoch.
+  
+  This is far too much, so I'm attempting to clear the history
+  variable.
+  """
+  def on_epoch_end(self, epoch, logs):
+    # MANAGE GARBAGE COLLECTION AND HISTORY CLEARING
+    del self.model.history
+    gc.collect()
+    self.model.history = tf.keras.callbacks.History()
+    print(f"History cleared: {self.model.history.history}")
 
 
 if __name__ == "__main__":
